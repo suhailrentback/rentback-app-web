@@ -1,4 +1,8 @@
-/** Brand = Logo + wordmark "RentBack" (emerald-600 light / emerald-400 dark) */
+'use client';
+
+import * as React from 'react';
+
+/** Inline SVG home/roof mark — emerald stroke by default (#059669). */
 export function Logo({
   size = 22,
   stroke = '#059669',
@@ -27,7 +31,8 @@ export function Logo({
   );
 }
 
-export default function Brand({
+/** Brand = Logo + wordmark "RentBack" (emerald-600 light / emerald-400 dark) */
+export function Brand({
   size = 22,
   stroke = '#059669',
   className = '',
@@ -42,7 +47,7 @@ export default function Brand({
     <span
       className={[
         'inline-flex items-center gap-2 font-bold',
-        'text-brand-600 dark:text-brand-400',
+        'text-emerald-600 dark:text-emerald-400',
         className || '',
       ].join(' ')}
     >
@@ -51,3 +56,5 @@ export default function Brand({
     </span>
   );
 }
+
+export default Brand;
