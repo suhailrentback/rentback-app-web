@@ -2,5 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Smooth font rendering */
-html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+:root {
+  color-scheme: light dark;
+}
+
+html, body { height: 100%; }
+
+body {
+  @apply bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100;
+}
