@@ -1,14 +1,8 @@
 // lib/supabase/server.ts
-import { cookies } from 'next/headers';
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import { cookies, headers } from 'next/headers';
+import { createServerClient } from '@supabase/ssr';
 
-/**
- * SSR Supabase client wired to Next.js cookies.
- * Requires:
- *  - NEXT_PUBLIC_SUPABASE_URL
- *  - NEXT_PUBLIC_SUPABASE_ANON_KEY
- */
-export function createSupabaseServerClient() {
+export function supabaseServer() {
   const cookieStore = cookies();
 
   return createServerClient(
@@ -19,22 +13,14 @@ export function createSupabaseServerClient() {
         get(name: string) {
           return cookieStore.get(name)?.value;
         },
-        set(name: string, value: string, options: CookieOptions) {
-          cookieStore.set(name, value, options);
+        set(name: string, value: string, options: any) {
+          cookieStore.set({ name, value, ...options });
         },
-        remove(name: string, options: CookieOptions) {
-          cookieStore.set(name, '', { ...options, maxAge: 0 });
+        remove(name: string, options: any) {
+          cookieStore.set({ name, value: '', ...options, maxAge: 0 });
         },
       },
+      headers,
     }
   );
 }
-
-/**
- * Back-compat alias so existing imports like:
- *   import { supabaseServer } from '@/lib/supabase/server'
- * keep working.
- */
-export const supabaseServer = createSupabaseServerClient;
-// Extra alias in case any files use a different name:
-export const getSupabaseServer = createSupabaseServerClient;
