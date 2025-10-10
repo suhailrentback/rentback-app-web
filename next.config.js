@@ -1,7 +1,6 @@
-import type { NextConfig } from 'next';
-
-const nextConfig: NextConfig = {
-  // Keep builds green even if ESLint finds issues.
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  // Keep builds green even if ESLint finds issues (we’ll tighten later).
   eslint: { ignoreDuringBuilds: true },
   poweredByHeader: false,
 };
