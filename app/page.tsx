@@ -1,42 +1,40 @@
-// app/page.tsx
-// Landing page content only — header & footer come from app/layout.tsx
-export const dynamic = "force-static";
-
+// app/page.tsx — landing content only (header/footer come from layout)
 import Link from "next/link";
+import { getLang, getCopy } from "@/lib/i18n";
 
 export default function LandingPage() {
+  const lang = getLang();
+  const t = getCopy(lang).landing;
+
   return (
     <>
       {/* Hero */}
       <section className="py-20 grid md:grid-cols-2 gap-12 items-center">
         <div>
           <h1 className="text-4xl md:text-5xl font-extrabold leading-tight">
-            Pay rent, earn <span className="text-emerald-600 dark:text-emerald-400">rewards.</span>
+            {t.h1a} <span className="text-emerald-600 dark:text-emerald-400">{t.h1b}</span>
           </h1>
-          <p className="mt-4 text-lg opacity-80">
-            A modern rent-payments experience for Pakistan — Raast, cards & wallets, and a local rewards
-            marketplace.
-          </p>
+          <p className="mt-4 text-lg opacity-80">{t.sub}</p>
 
           <div className="mt-8 flex flex-wrap gap-3">
             <Link
               href="/sign-in"
               className="px-5 py-3 rounded-xl font-semibold bg-emerald-600 hover:bg-emerald-700 text-white"
             >
-              Get started
+              {t.cta}
             </Link>
             <a
               href="#features"
               className="px-5 py-3 rounded-xl font-semibold border border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/10"
             >
-              Learn more
+              {t.learn}
             </a>
           </div>
 
           <ul className="mt-8 space-y-2 text-sm opacity-80">
-            <li>• Pay via Raast, card, or wallet</li>
-            <li>• Earn points and redeem with local brands</li>
-            <li>• English/Urdu, light/dark, mobile-first</li>
+            <li>• {t.point1}</li>
+            <li>• {t.point2}</li>
+            <li>• {t.point3}</li>
           </ul>
         </div>
 
@@ -51,24 +49,24 @@ export default function LandingPage() {
           <div className="relative rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-white/5 p-6">
             <MockCard />
           </div>
-          <p className="mt-3 text-xs opacity-70">Mock card UI for preview only.</p>
+          <p className="mt-3 text-xs opacity-70">{t.mockNote}</p>
         </div>
       </section>
 
       {/* Features */}
       <section id="features" className="py-12 grid md:grid-cols-3 gap-6">
-        <Feature
-          title="Raast native"
-          desc="Bank transfer rails with references matched to receipts."
-        />
-        <Feature
-          title="Rewards engine"
-          desc="Points accrual, promo codes, and a marketplace to redeem."
-        />
-        <Feature
-          title="Built for PK"
-          desc="PKR formatting, Urdu support, and fintech-grade UI."
-        />
+        <Feature title={lang === "ur" ? "راست انٹیگریشن" : "Raast native"} desc={lang === "ur"
+          ? "بینک ٹرانسفر کے ذریعے ریفرنس کے ساتھ رسید میچنگ۔"
+          : "Bank transfer rails with references matched to receipts."
+        } />
+        <Feature title={lang === "ur" ? "ریوارڈز انجن" : "Rewards engine"} desc={lang === "ur"
+          ? "پوائنٹس، پرومو کوڈز، اور ریڈیم مارکیٹ پلیس۔"
+          : "Points accrual, promo codes, and a marketplace to redeem."
+        } />
+        <Feature title={lang === "ur" ? "پاکستان کے لیے" : "Built for PK"} desc={lang === "ur"
+          ? "PKR فارمیٹنگ، اردو سپورٹ، اور جدید فن ٹیک UI۔"
+          : "PKR formatting, Urdu support, and fintech-grade UI."
+        } />
       </section>
     </>
   );
