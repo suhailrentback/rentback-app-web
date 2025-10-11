@@ -1,7 +1,8 @@
-// app/sign-in/page.tsx
 'use client';
+export const dynamic = 'force-dynamic';
+export const fetchCache = 'force-no-store';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Brand } from '@/components/Brand';
@@ -50,7 +51,14 @@ const copy: Record<Lang, {
 };
 
 export default function SignInPage() {
-  // Use the global language stored in localStorage by the header
+  return (
+    <Suspense fallback={null}>
+      <SignInInner />
+    </Suspense>
+  );
+}
+
+function SignInInner() {
   const [lang, setLang] = useState<Lang>('en');
   useEffect(() => {
     try {
