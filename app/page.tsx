@@ -1,4 +1,5 @@
-// app/page.tsx
+// app/page.tsx (web)
+// Brand-consistent public landing (EN/UR, theme toggle). No duplicate keys.
 "use client";
 export const dynamic = "force-dynamic";
 
@@ -45,12 +46,15 @@ export default function LandingPage() {
         <div className="mx-auto max-w-6xl px-4 h-16 flex items-center justify-between">
           <Brand />
           <nav className="flex items-center gap-2">
-            <Link href="/founder" className="px-3 py-2 text-sm rounded-lg hover:bg-black/5 dark:hover:bg-white/10">
+            <Link
+              href="/founder"
+              className="px-3 py-2 text-sm rounded-lg hover:bg-black/5 dark:hover:bg-white/10"
+            >
               {t.founder}
             </Link>
             <button
               onClick={() => setLang((p) => (p === "en" ? "ur" : "en"))}
-              className="px-3 py-2 text-sm rounded-lg border border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg:white/10"
+              className="px-3 py-2 text-sm rounded-lg border border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/10"
               aria-label="toggle language"
             >
               {lang === "en" ? "اردو" : "English"}
@@ -77,7 +81,10 @@ export default function LandingPage() {
         <section className="py-20 grid md:grid-cols-2 gap-12 items-center">
           <div>
             <h1 className="text-4xl md:text-5xl font-extrabold leading-tight">
-              {t.h1a} <span className="text-emerald-600 dark:text-emerald-400">{t.h1b}</span>
+              {t.h1a}{" "}
+              <span className="text-emerald-600 dark:text-emerald-400">
+                {t.h1b}
+              </span>
             </h1>
             <p className="mt-4 text-lg opacity-80">{t.sub}</p>
 
@@ -137,12 +144,31 @@ export default function LandingPage() {
         {/* Footer */}
         <footer className="py-10 text-xs opacity-70">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <span>© {new Date().getFullYear()} RentBack Technologies (Pvt) Ltd</span>
+            <span>
+              © {new Date().getFullYear()} RentBack Technologies (Pvt) Ltd
+            </span>
             <div className="flex gap-4">
-              <Link href="/privacy" className="hover:opacity-100 opacity-80">Privacy</Link>
-              <Link href="/founder" className="hover:opacity-100 opacity-80">Founder</Link>
-              <a href="#" className="hover:opacity-100 opacity-80">Terms</a>
-              <a href="mailto:help@rentback.app" className="hover:opacity-100 opacity-80">Contact</a>
+              <Link
+                href="/privacy"
+                className="hover:opacity-100 opacity-80"
+              >
+                {t.privacy}
+              </Link>
+              <Link
+                href="/founder"
+                className="hover:opacity-100 opacity-80"
+              >
+                {t.founder}
+              </Link>
+              <a href="#" className="hover:opacity-100 opacity-80">
+                {t.terms}
+              </a>
+              <a
+                href="mailto:help@rentback.app"
+                className="hover:opacity-100 opacity-80"
+              >
+                {t.contact}
+              </a>
             </div>
           </div>
         </footer>
@@ -158,7 +184,9 @@ function MockCard() {
         <span>RentBack</span>
         <span>PK</span>
       </div>
-      <div className="mt-6 text-2xl font-semibold tracking-widest">6032 • • • • • • 3912</div>
+      <div className="mt-6 text-2xl font-semibold tracking-widest">
+        6032 • • • • • • 3912
+      </div>
       <div className="mt-6 text-sm opacity-90">BILL PAY • RAAST • REWARDS</div>
       <div className="mt-8 flex items-center justify-between text-sm">
         <span>VALID THRU 12/27</span>
@@ -177,7 +205,8 @@ const copy = {
     contact: "Contact",
     h1a: "Pay rent, earn",
     h1b: "rewards.",
-    sub: "A modern rent-payments experience for Pakistan — Raast, cards & wallets, and a local rewards marketplace.",
+    sub:
+      "A modern rent-payments experience for Pakistan — Raast, cards & wallets, and a local rewards marketplace.",
     cta: "Get started",
     learn: "Learn more",
     point1: "Pay via Raast, card, or wallet",
@@ -186,7 +215,6 @@ const copy = {
     mockNote: "Mock card UI for preview only.",
     light: "Light",
     dark: "Dark",
-    founder: "Founder",
   },
   ur: {
     signIn: "سائن اِن",
@@ -196,7 +224,8 @@ const copy = {
     contact: "رابطہ",
     h1a: "کرایہ ادا کریں،",
     h1b: "انعامات حاصل کریں۔",
-    sub: "پاکستان کے لیے جدید کرایہ ادائیگی کا تجربہ — راست، کارڈز اور والیٹس، اور مقامی ریوارڈز مارکیٹ پلیس۔",
+    sub:
+      "پاکستان کے لیے جدید کرایہ ادائیگی کا تجربہ — راست، کارڈز اور والیٹس، اور مقامی ریوارڈز مارکیٹ پلیس۔",
     cta: "شروع کریں",
     learn: "مزید جانیں",
     point1: "راست، کارڈ یا والیٹ سے ادائیگی",
@@ -211,13 +240,31 @@ const copy = {
 function features(lang: "en" | "ur") {
   return lang === "en"
     ? [
-        { title: "Raast native", desc: "Bank transfer rails with references matched to receipts." },
-        { title: "Rewards engine", desc: "Points accrual, promo codes, and a marketplace to redeem." },
-        { title: "Built for PK", desc: "PKR formatting, Urdu support, and fintech-grade UI." },
+        {
+          title: "Raast native",
+          desc: "Bank transfer rails with references matched to receipts.",
+        },
+        {
+          title: "Rewards engine",
+          desc: "Points accrual, promo codes, and a marketplace to redeem.",
+        },
+        {
+          title: "Built for PK",
+          desc: "PKR formatting, Urdu support, and fintech-grade UI.",
+        },
       ]
     : [
-        { title: "راست انٹیگریشن", desc: "بینک ٹرانسفر کے ذریعے ریفرنس کے ساتھ رسید میچنگ۔" },
-        { title: "ریوارڈز انجن", desc: "پوائنٹس، پرومو کوڈز، اور ریڈیم مارکیٹ پلیس۔" },
-        { title: "پاکستان کے لیے", desc: "PKR فارمیٹنگ، اردو سپورٹ، اور جدید فن ٹیک UI۔" },
+        {
+          title: "راست انٹیگریشن",
+          desc: "بینک ٹرانسفر کے ذریعے ریفرنس کے ساتھ رسید میچنگ۔",
+        },
+        {
+          title: "ریوارڈز انجن",
+          desc: "پوائنٹس، پرومو کوڈز، اور ریڈیم مارکیٹ پلیس۔",
+        },
+        {
+          title: "پاکستان کے لیے",
+          desc: "PKR فارمیٹنگ، اردو سپورٹ، اور جدید فن ٹیک UI۔",
+        },
       ];
 }
