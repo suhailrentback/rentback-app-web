@@ -5,7 +5,6 @@ import { createServerClient } from '@supabase/ssr';
 export function supabaseServer() {
   const cookieStore = cookies();
 
-  // Version-agnostic cookie shim (prevents TS overload issues on Vercel)
   const cookieShim = {
     get: (name: string) => cookieStore.get(name)?.value,
     set: (name: string, value: string, options: any) =>
