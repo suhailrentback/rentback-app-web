@@ -1,6 +1,4 @@
 // components/Brand.tsx
-'use client';
-
 import * as React from 'react';
 
 /** Inline SVG home/roof mark — emerald stroke by default (#059669). */
