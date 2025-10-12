@@ -242,9 +242,10 @@ export function getLang(): Lang {
   return fromCookie === "ur" ? "ur" : "en";
 }
 
-/** getDir(): returns "rtl" for Urdu, otherwise "ltr". */
-export function getDir(): "rtl" | "ltr" {
-  return isRTL(getLang()) ? "rtl" : "ltr";
+/** getDir(): now accepts optional lang; if omitted, uses current cookie/default. */
+export function getDir(input?: Lang | string): "rtl" | "ltr" {
+  const l = input ?? getLang();
+  return isRTL(l) ? "rtl" : "ltr";
 }
 
 /** getTheme(): reads "rb-theme" cookie on client; defaults to "dark" on server. */
