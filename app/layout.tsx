@@ -1,16 +1,12 @@
+// USE IN WEB REPO ONLY: rentback-app-web
 // app/layout.tsx
-export const dynamic = "force-dynamic";
-
 import "./globals.css";
 import type { Metadata } from "next";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import { getLang, getTheme, getDir } from "@/lib/i18n";
 
-export const metadata: Metadata = {
-  title: "RentBack",
-  description: "Rent payments for Pakistan — Raast, cards & rewards.",
-};
+export const metadata: Metadata = { title: "RentBack" };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const lang = getLang();
