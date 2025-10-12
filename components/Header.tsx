@@ -1,4 +1,5 @@
-// components/Header.tsx (APP)
+// USE IN WEB REPO ONLY: rentback-app-web
+// components/Header.tsx
 import Link from "next/link";
 import Brand from "@/components/Brand";
 import ThemeLangToggle from "@/components/ThemeLangToggle";
@@ -10,25 +11,19 @@ export default function Header() {
   const t = getCopy(lang).common;
 
   return (
-    <header className="sticky top-0 z-40 backdrop-blur supports-[backdrop-filter]:bg-white/60 dark:supports-[backdrop-filter]:bg-neutral-950/60 border-b border-black/10 dark:border-white/10">
+    <header className="sticky top-0 z-40 backdrop-blur bg-white/70 dark:bg-neutral-950/60 border-b border-black/5 dark:border-white/10">
       <div className="mx-auto max-w-6xl px-4 h-14 flex items-center justify-between">
         <div className="inline-flex items-center gap-3">
           <Brand />
-          <span className="text-sm opacity-70">/ {t.founder ?? "Founder"}</span>
         </div>
-        <nav className="flex items-center gap-3">
+
+        <nav className="flex items-center gap-2">
           <Link
             href="/sign-in"
             className="px-3 py-2 text-sm rounded-lg hover:bg-black/5 dark:hover:bg-white/10"
           >
             {t.signIn}
           </Link>
-          <a
-            href="https://admin.rentback.app"
-            className="px-3 py-2 text-sm rounded-lg hover:bg-black/5 dark:hover:bg-white/10"
-          >
-            {t.admin ?? "Admin"}
-          </a>
           <ThemeLangToggle initialLang={lang} initialTheme={theme} />
         </nav>
       </div>
