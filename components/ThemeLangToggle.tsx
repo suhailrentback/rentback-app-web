@@ -2,96 +2,62 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useOptimistic, useTransition } from "react";
+import { setLang, setTheme, type Lang, type Theme } from "@/lib/i18n";
 
-type Lang = "en" | "ur";
-type Theme = "light" | "dark";
-
-export default function ThemeLangToggle({
-  initialLang,
-  initialTheme,
-  compact = false,
-}: {
+type Props = {
   initialLang: Lang;
   initialTheme: Theme;
   compact?: boolean;
-}) {
+};
+
+export default function ThemeLangToggle({ initialLang, initialTheme, compact }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [lang, setLang] = useState<Lang>(initialLang);
-  const [theme, setTheme] = useState<Theme>(initialTheme);
 
-  async function update(partial: Partial<{ lang: Lang; theme: Theme }>) {
-    const nextLang = partial.lang ?? lang;
-    const nextTheme = partial.theme ?? theme;
+  const [lang, setLangOpt] = useOptimistic<Lang>(initialLang);
+  const [theme, setThemeOpt] = useOptimistic<Theme>(initialTheme);
 
-    // Optimistic UI
-    setLang(nextLang);
-    setTheme(nextTheme);
-
-    await fetch("/api/prefs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      cache: "no-store",
-      body: JSON.stringify({ lang: nextLang, theme: nextTheme }),
+  const flipLang = () => {
+    const next = lang === "en" ? "ur" : "en";
+    // optimistic UI
+    setLangOpt(next);
+    // instant DOM hint so layout/header match quickly
+    if (typeof document !== "undefined") {
+      document.documentElement.setAttribute("lang", next);
+      document.documentElement.setAttribute("dir", next === "ur" ? "rtl" : "ltr");
+    }
+    // persist + refresh
+    startTransition(async () => {
+      await setLang(next);
+      router.refresh();
     });
+  };
 
-    startTransition(() => router.refresh());
-  }
+  const flipTheme = () => {
+    const next = theme === "light" ? "dark" : "light";
+    setThemeOpt(next);
+    if (typeof document !== "undefined") {
+      document.documentElement.classList.toggle("dark", next === "dark");
+    }
+    startTransition(async () => {
+      await setTheme(next);
+      router.refresh();
+    });
+  };
 
-  const pill =
-    "px-2 py-1 text-xs rounded-md border border-black/10 dark:border-white/15";
-  const active =
-    "bg-black text-white dark:bg-white dark:text-black border-transparent";
-  const inactive =
-    "bg-transparent hover:bg-black/5 dark:hover:bg-white/10";
+  const btnCls =
+    "px-3 py-1.5 rounded-lg border border-black/10 dark:border-white/10 " +
+    "hover:bg-black/5 dark:hover:bg-white/10 text-sm disabled:opacity-50";
 
   return (
     <div className={compact ? "flex items-center gap-2" : "flex items-center gap-3"}>
-      {/* Theme */}
-      <div className="inline-flex items-center gap-1">
-        <button
-          type="button"
-          className={`${pill} ${theme === "light" ? active : inactive}`}
-          onClick={() => update({ theme: "light" })}
-          aria-pressed={theme === "light"}
-          disabled={isPending}
-        >
-          {lang === "ur" ? "لائٹ" : "Light"}
-        </button>
-        <button
-          type="button"
-          className={`${pill} ${theme === "dark" ? active : inactive}`}
-          onClick={() => update({ theme: "dark" })}
-          aria-pressed={theme === "dark"}
-          disabled={isPending}
-        >
-          {lang === "ur" ? "ڈارک" : "Dark"}
-        </button>
-      </div>
-
-      {/* Language */}
-      <div className="inline-flex items-center gap-1">
-        <button
-          type="button"
-          className={`${pill} ${lang === "en" ? active : inactive}`}
-          onClick={() => update({ lang: "en" })}
-          aria-pressed={lang === "en"}
-          disabled={isPending}
-        >
-          EN
-        </button>
-        <button
-          type="button"
-          className={`${pill} ${lang === "ur" ? active : inactive}`}
-          onClick={() => update({ lang: "ur" })}
-          aria-pressed={lang === "ur"}
-          disabled={isPending}
-          dir="rtl"
-        >
-          اردو
-        </button>
-      </div>
+      <button className={btnCls} onClick={flipLang} disabled={isPending} aria-live="polite">
+        {lang === "en" ? "اردو" : "English"}
+      </button>
+      <button className={btnCls} onClick={flipTheme} disabled={isPending} aria-live="polite">
+        {theme === "light" ? "Dark" : "Light"}
+      </button>
     </div>
   );
 }
