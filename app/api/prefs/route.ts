@@ -1,38 +1,25 @@
+// USE IN BOTH REPOS: rentback-app-web AND rentback-admin-web
 // app/api/prefs/route.ts
 import { NextResponse } from "next/server";
+import { headers } from "next/headers";
+import type { Lang, Theme } from "@/lib/i18n";
 
 export async function POST(req: Request) {
-  const oneYear = 60 * 60 * 24 * 365;
-  let lang: "en" | "ur" | undefined;
-  let theme: "light" | "dark" | undefined;
+  const { lang, theme } = (await req.json().catch(() => ({}))) as {
+    lang?: Lang;
+    theme?: Theme;
+  };
 
-  try {
-    const body = await req.json();
-    if (body?.lang === "en" || body?.lang === "ur") lang = body.lang;
-    if (body?.theme === "light" || body?.theme === "dark") theme = body.theme;
-  } catch {
-    // ignore malformed body; we’ll still return ok=false below if nothing valid
+  const host = headers().get("host") || "";
+  const domain = host.endsWith("rentback.app") ? ".rentback.app" : undefined;
+
+  const res = NextResponse.json({ ok: true });
+
+  if (lang && (lang === "en" || lang === "ur")) {
+    res.cookies.set("lang", lang, { path: "/", maxAge: 60 * 60 * 24 * 365, domain });
   }
-
-  const res = NextResponse.json({ ok: Boolean(lang || theme) });
-
-  if (lang) {
-    res.cookies.set("rb_lang", lang, {
-      path: "/",
-      httpOnly: false,
-      sameSite: "lax",
-      secure: true,
-      maxAge: oneYear,
-    });
-  }
-  if (theme) {
-    res.cookies.set("rb_theme", theme, {
-      path: "/",
-      httpOnly: false,
-      sameSite: "lax",
-      secure: true,
-      maxAge: oneYear,
-    });
+  if (theme && (theme === "light" || theme === "dark")) {
+    res.cookies.set("theme", theme, { path: "/", maxAge: 60 * 60 * 24 * 365, domain });
   }
 
   return res;
