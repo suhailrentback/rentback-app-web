@@ -1,164 +1,147 @@
+// USE IN BOTH REPOS: rentback-app-web AND rentback-admin-web
 // lib/i18n.ts
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 
+/** Theme & language */
 export type Lang = "en" | "ur";
 export type Theme = "light" | "dark";
 
-/** Read cookies (server) */
+/** Copy types shared by web + admin */
+export type CommonCopy = {
+  signIn: string;
+  privacy: string;
+  terms: string;
+  contact: string;
+  admin?: string;
+  mainSite?: string;
+  founder?: string;
+};
+
+export type LandingCopy = {
+  h1a: string;
+  h1b: string;
+  sub: string;
+  cta: string;
+  learnMore: string;
+  bullets: string[];
+};
+
+export type AdminLandingCopy = {
+  title: string;
+  subtitle: string;
+  notes: string[];
+  kpis: { label: string; value: string; sub: string }[];
+  mockNote: string;
+};
+
+export type Copy = {
+  common: CommonCopy;
+  landing?: LandingCopy;           // web landing
+  adminLanding?: AdminLandingCopy; // admin landing
+};
+
+/** Read prefs (server) */
 export const getLang = (): Lang => {
   const v = cookies().get("lang")?.value as Lang | undefined;
   return v === "ur" ? "ur" : "en";
 };
+
 export const getTheme = (): Theme => {
   const v = cookies().get("theme")?.value as Theme | undefined;
   return v === "dark" ? "dark" : "light";
 };
-/** Accepts optional arg so both getDir() and getDir(lang) work */
+
 export const getDir = (lang?: Lang): "ltr" | "rtl" =>
   (lang ?? getLang()) === "ur" ? "rtl" : "ltr";
 
-/** Server actions for toggles */
-export const setLang = async (lang: Lang) => {
-  "use server";
-  cookies().set("lang", lang, { path: "/", maxAge: 60 * 60 * 24 * 365 });
-};
-export const setTheme = async (theme: Theme) => {
-  "use server";
-  cookies().set("theme", theme, { path: "/", maxAge: 60 * 60 * 24 * 365 });
+/** Cookie scope for prod cross-subdomain */
+export const cookieDomain = () => {
+  const host = headers().get("host") || "";
+  return host.endsWith("rentback.app") ? ".rentback.app" : undefined;
 };
 
-/** ---- Typed copy ---- */
-export interface CommonCopy {
-  brand: string;
-  signIn: string;
-  founder?: string;
-  admin?: string;
-  mainSite?: string;
-  privacy: string;
-  terms: string;
-  contact: string;
-  demo?: string;
-}
-export interface LandingCopy {
-  h1a: string;
-  h1b: string;
-  heroSubtitle: string;
-  cta: string;
-  ctaSecondary: string;
-  bullets: string[];
-}
-export interface AdminLandingCopy {
-  title: string;
-  subtitle: string;
-  signInAdmin?: string;
-  goToMain?: string;
-  notes?: string[];
-  dashboardSample?: {
-    collectedToday: string;
-    openTickets: string;
-    pendingPayouts: string;
-    riskFlags: string;
-    tagPreview: string;
-  };
-}
-export interface Copy {
-  common: CommonCopy;
-  landing: LandingCopy;
-  adminLanding: AdminLandingCopy;
-}
-
-/** ---- Dictionaries ---- */
-const COPY: Record<Lang, Copy> = {
-  en: {
-    common: {
-      brand: "RentBack",
-      signIn: "Sign in",
-      founder: "Founder",
-      admin: "Admin",
-      mainSite: "Main Site",
-      privacy: "Privacy",
-      terms: "Terms",
-      contact: "Contact",
-      demo: "Continue in Demo Mode",
-    },
-    landing: {
-      h1a: "Pay rent, earn rewards.",
-      h1b: "A modern rent-payments experience for Pakistan.",
-      heroSubtitle:
-        "Raast, cards & wallets, and a local rewards marketplace.",
-      cta: "Get started",
-      ctaSecondary: "Learn more",
-      bullets: [
-        "Pay via Raast, card, or wallet",
-        "Earn points; redeem with local brands",
-        "English/Urdu, light/dark, mobile-first",
-      ],
-    },
-    adminLanding: {
-      title: "RentBack Admin",
-      subtitle:
-        "Secure operations console for payouts, reconciliation, rewards, tenants, and staff roles.",
-      signInAdmin: "Sign in to Admin",
-      goToMain: "Go to Main Site",
-      notes: [
-        "Access is restricted to admin@rentback.app and approved staff.",
-        "Least-privilege roles, audit logs, and 2FA recommended.",
-        "Use a secure device and private network when accessing Admin.",
-      ],
-      dashboardSample: {
-        collectedToday: "Collected (Today)",
-        openTickets: "Open Tickets",
-        pendingPayouts: "Pending Payouts",
-        riskFlags: "Risk Flags",
-        tagPreview: "Review queue",
-      },
-    },
+/** Dictionaries */
+const en: Copy = {
+  common: {
+    signIn: "Sign in",
+    privacy: "Privacy",
+    terms: "Terms",
+    contact: "Contact",
+    admin: "Admin",
+    mainSite: "Main Site",
+    founder: "Founder",
   },
-  ur: {
-    common: {
-      brand: "رینٹ بیک",
-      signIn: "سائن اِن",
-      founder: "بانی",
-      admin: "ایڈمن",
-      mainSite: "مرکزی سائٹ",
-      privacy: "پرائیویسی",
-      terms: "شرائط",
-      contact: "رابطہ",
-      demo: "ڈیمو موڈ میں جاری رکھیں",
-    },
-    landing: {
-      h1a: "کِرایہ دیں، انعام پائیں۔",
-      h1b: "پاکستان کے لیے جدید رینٹ پیمنٹس۔",
-      heroSubtitle:
-        "راست، کارڈز اور والٹس، اور مقامی انعامات مارکیٹ پلیس۔",
-      cta: "شروع کریں",
-      ctaSecondary: "مزید جانیں",
-      bullets: [
-        "راست، کارڈ یا والٹ کے ذریعے ادائیگی",
-        "پوائنٹس کمائیں؛ مقامی برانڈز پر ریڈیم کریں",
-        "اردو/انگریزی، لائٹ/ڈارک، موبائل فرسٹ",
-      ],
-    },
-    adminLanding: {
-      title: "رینٹ بیک ایڈمن",
-      subtitle:
-        "پے آؤٹس، ریکنسیلی ایشن، ریوارڈز، کرایہ دار اور اسٹاف رولز کے لیے محفوظ کنسول۔",
-      signInAdmin: "ایڈمن میں سائن اِن کریں",
-      goToMain: "مرکزی سائٹ پر جائیں",
-      notes: [
-        "رسائی صرف admin@rentback.app اور منظور شدہ اسٹاف تک محدود ہے۔",
-        "کم سے کم مراعات والے رولز، آڈٹ لاگز اور 2FA تجویز کی جاتی ہے۔",
-        "ایڈمن تک رسائی کے لیے محفوظ ڈیوائس اور نجی نیٹ ورک استعمال کریں۔",
-      ],
-      dashboardSample: {
-        collectedToday: "آج موصول",
-        openTickets: "کھلے ٹکٹس",
-        pendingPayouts: "زیرِالتوا پے آؤٹس",
-        riskFlags: "رسک فلیگز",
-        tagPreview: "جائزہ قطار",
-      },
-    },
+  landing: {
+    h1a: "Pay rent, earn rewards.",
+    h1b: "A modern rent-payments experience for Pakistan.",
+    sub: "Raast, cards & wallets, and a local rewards marketplace.",
+    cta: "Get started",
+    learnMore: "Learn more",
+    bullets: [
+      "Pay via Raast, card, or wallet",
+      "Earn points and redeem with local brands",
+      "English/Urdu, light/dark, mobile-first",
+    ],
+  },
+  adminLanding: {
+    title: "RentBack Admin",
+    subtitle:
+      "Secure operations console for payouts, reconciliation, rewards, tenants, and staff roles.",
+    notes: [
+      "Access is restricted to admin@rentback.app and approved staff.",
+      "Least-privilege roles, audit logs, and 2FA recommended.",
+      "Use a secure device and private network when accessing Admin.",
+    ],
+    kpis: [
+      { label: "Today", value: "PKR 2,450,000", sub: "Collected" },
+      { label: "Open Tickets", value: "7", sub: "SLA < 24h" },
+      { label: "Pending Payouts", value: "12", sub: "Cutoff 6pm PKT" },
+      { label: "Risk Flags", value: "3", sub: "Review queue" },
+    ],
+    mockNote: "Mock admin widgets for preview only.",
   },
 };
 
-export const getCopy = (lang: Lang = getLang()): Copy => COPY[lang];
+const ur: Copy = {
+  common: {
+    signIn: "سائن اِن",
+    privacy: "پرائیویسی",
+    terms: "شرائط",
+    contact: "رابطہ",
+    admin: "ایڈمن",
+    mainSite: "مرکزی سائٹ",
+    founder: "بانی",
+  },
+  landing: {
+    h1a: "کرایہ ادا کریں، انعام پائیں۔",
+    h1b: "پاکستان کے لیے جدید رینٹ پیمنٹس تجربہ۔",
+    sub: "راست، کارڈز اور والٹس، اور مقامی ریوارڈز مارکیٹ پلیس۔",
+    cta: "شروع کریں",
+    learnMore: "مزید جانیں",
+    bullets: [
+      "راست، کارڈ یا والٹ کے ذریعے ادائیگی",
+      "پوائنٹس کمائیں اور مقامی برانڈز پر ریڈیم کریں",
+      "اردو/انگریزی، لائٹ/ڈارک، موبائل فرسٹ",
+    ],
+  },
+  adminLanding: {
+    title: "رینٹ بیک ایڈمن",
+    subtitle:
+      "ادائیگیوں، مفاہمت، انعامات، کرایہ داروں اور اسٹاف رولز کے لیے محفوظ کنسول۔",
+    notes: [
+      "رسائی صرف admin@rentback.app اور منظور شدہ اسٹاف کے لیے ہے۔",
+      "کم از کم اختیارات، آڈٹ لاگز اور 2FA کی سفارش کی جاتی ہے۔",
+      "محفوظ ڈیوائس اور نجی نیٹ ورک پر ایڈمن استعمال کریں۔",
+    ],
+    kpis: [
+      { label: "آج", value: "PKR 2,450,000", sub: "جمع" },
+      { label: "کھلے ٹکٹس", value: "7", sub: "SLA < 24h" },
+      { label: "زیر التواء ادائیگیاں", value: "12", sub: "کٹ آف 6pm PKT" },
+      { label: "رسک فلیگز", value: "3", sub: "ریویو قطار" },
+    ],
+    mockNote: "یہ صرف پری ویو کے لیے فرضی ویجٹس ہیں۔",
+  },
+};
+
+/** Public getter */
+export const getCopy = (lang: Lang): Copy => (lang === "ur" ? ur : en);
