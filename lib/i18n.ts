@@ -1,6 +1,5 @@
 // lib/i18n.ts
-// Type-safe i18n with a strict Copy interface and helpers.
-// No side effects; safe on server & client.
+// Type-safe i18n with a strict Copy interface + compatibility shims (getLang/getDir/getTheme)
 
 export type Lang = "en" | "ur";
 
@@ -8,6 +7,7 @@ export type Lang = "en" | "ur";
 const RTL_LANGS: readonly Lang[] = ["ur"];
 
 export const STORAGE_LANG_KEY = "rb-lang";
+export const STORAGE_THEME_KEY = "rb-theme";
 
 /** Common strings used across the app (headers, footers, toggles). */
 interface CommonCopy {
@@ -32,9 +32,9 @@ interface LandingCopy {
   sub: string;
   ctaPrimary: string;
   ctaSecondary: string;
-  bullets: string[]; // 3 items typically
+  bullets: string[];
   mockNote: string;
-  features: Array<{ title: string; desc: string }>; // 3 cards typically
+  features: Array<{ title: string; desc: string }>;
 }
 
 /** Sign-in page strings. */
@@ -65,9 +65,7 @@ export interface Copy {
   adminLanding: AdminLandingCopy;
 }
 
-/** ---------------------------------------------
- *  English strings
- *  --------------------------------------------- */
+/* ---------------- EN ---------------- */
 const en: Copy = {
   common: {
     brand: "RentBack",
@@ -130,9 +128,7 @@ const en: Copy = {
   },
 };
 
-/** ---------------------------------------------
- *  Urdu strings
- *  --------------------------------------------- */
+/* ---------------- UR ---------------- */
 const ur: Copy = {
   common: {
     brand: "RentBack",
@@ -195,33 +191,64 @@ const ur: Copy = {
   },
 };
 
-/** Registry holding all locales. */
+/* -------- Registry & helpers -------- */
 const REGISTRY: Record<Lang, Copy> = { en, ur };
 
-/** Get a language safely (maps anything unknown to 'en'). */
 export function normalizeLang(input?: string | null): Lang {
   const val = (input || "").toLowerCase();
   if (val.startsWith("ur")) return "ur";
   return "en";
 }
 
-/** Return the copy object for a given language (default 'en'). */
 export function getCopy(lang: Lang | string = "en"): Copy {
   const key = (typeof lang === "string" ? normalizeLang(lang) : lang) as Lang;
   return REGISTRY[key] || REGISTRY.en;
 }
 
-/** Helpers for rendering <html> correctly. */
 export function isRTL(lang: Lang | string): boolean {
   const key = normalizeLang(typeof lang === "string" ? lang : String(lang));
   return RTL_LANGS.includes(key as Lang);
 }
 
-/** Use on the <html> tag to keep document attributes consistent. */
 export function getHtmlAttrs(lang: Lang | string = "en") {
   const l = normalizeLang(lang);
   return {
     lang: l,
     dir: isRTL(l) ? "rtl" : "ltr",
   } as const;
+}
+
+/* -------- Compatibility shims so existing imports keep working -------- */
+
+/** Minimal cookie reader that works safely on client; server falls back to null. */
+function readCookieSync(name: string): string | null {
+  try {
+    if (typeof document !== "undefined") {
+      const pattern = new RegExp(
+        "(?:^|; )" + name.replace(/[$()*+./?[\\\]^{|}-]/g, "\\$&") + "=([^;]*)"
+      );
+      const m = document.cookie.match(pattern);
+      return m ? decodeURIComponent(m[1]) : null;
+    }
+  } catch {
+    /* noop */
+  }
+  return null;
+}
+
+/** getLang(): preserves your existing API. Reads cookie on client; defaults to "en" on server. */
+export function getLang(): Lang {
+  const fromCookie = readCookieSync(STORAGE_LANG_KEY);
+  return fromCookie === "ur" ? "ur" : "en";
+}
+
+/** getDir(): returns "rtl" for Urdu, otherwise "ltr". */
+export function getDir(): "rtl" | "ltr" {
+  return isRTL(getLang()) ? "rtl" : "ltr";
+}
+
+/** getTheme(): reads "rb-theme" cookie on client; defaults to "dark" on server. */
+export function getTheme(): "light" | "dark" {
+  const fromCookie = readCookieSync(STORAGE_THEME_KEY);
+  return fromCookie === "light" ? "light" : "dark";
 }
