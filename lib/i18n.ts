@@ -4,33 +4,55 @@ import { cookies } from "next/headers";
 export type Lang = "en" | "ur";
 export type Theme = "light" | "dark";
 
+/** Read cookies (server) */
+export const getLang = (): Lang => {
+  const v = cookies().get("lang")?.value as Lang | undefined;
+  return v === "ur" ? "ur" : "en";
+};
+export const getTheme = (): Theme => {
+  const v = cookies().get("theme")?.value as Theme | undefined;
+  return v === "dark" ? "dark" : "light";
+};
+/** Accepts optional arg so both getDir() and getDir(lang) work */
+export const getDir = (lang?: Lang): "ltr" | "rtl" =>
+  (lang ?? getLang()) === "ur" ? "rtl" : "ltr";
+
+/** Server actions for toggles */
+export const setLang = async (lang: Lang) => {
+  "use server";
+  cookies().set("lang", lang, { path: "/", maxAge: 60 * 60 * 24 * 365 });
+};
+export const setTheme = async (theme: Theme) => {
+  "use server";
+  cookies().set("theme", theme, { path: "/", maxAge: 60 * 60 * 24 * 365 });
+};
+
+/** ---- Typed copy ---- */
 export interface CommonCopy {
+  brand: string;
   signIn: string;
-  privacy: string;
-  terms: string;
-  contact: string;
   founder?: string;
   admin?: string;
   mainSite?: string;
-  continueDemo?: string;
+  privacy: string;
+  terms: string;
+  contact: string;
+  demo?: string;
 }
-
 export interface LandingCopy {
-  heroTitle: string;
+  h1a: string;
+  h1b: string;
   heroSubtitle: string;
+  cta: string;
+  ctaSecondary: string;
   bullets: string[];
-  // Back-compat with older pages:
-  cta?: string;
-  ctaPrimary?: string;
-  ctaSecondary?: string;
 }
-
 export interface AdminLandingCopy {
-  heroTitle: string;
-  heroSubtitle: string;
-  notes?: string[];
+  title: string;
+  subtitle: string;
   signInAdmin?: string;
   goToMain?: string;
+  notes?: string[];
   dashboardSample?: {
     collectedToday: string;
     openTickets: string;
@@ -39,121 +61,104 @@ export interface AdminLandingCopy {
     tagPreview: string;
   };
 }
-
 export interface Copy {
   common: CommonCopy;
   landing: LandingCopy;
   adminLanding: AdminLandingCopy;
 }
 
-const en: Copy = {
-  common: {
-    signIn: "Sign in",
-    privacy: "Privacy",
-    terms: "Terms",
-    contact: "Contact",
-    founder: "Founder",
-    admin: "Admin",
-    mainSite: "Main Site",
-    continueDemo: "Continue in Demo Mode",
+/** ---- Dictionaries ---- */
+const COPY: Record<Lang, Copy> = {
+  en: {
+    common: {
+      brand: "RentBack",
+      signIn: "Sign in",
+      founder: "Founder",
+      admin: "Admin",
+      mainSite: "Main Site",
+      privacy: "Privacy",
+      terms: "Terms",
+      contact: "Contact",
+      demo: "Continue in Demo Mode",
+    },
+    landing: {
+      h1a: "Pay rent, earn rewards.",
+      h1b: "A modern rent-payments experience for Pakistan.",
+      heroSubtitle:
+        "Raast, cards & wallets, and a local rewards marketplace.",
+      cta: "Get started",
+      ctaSecondary: "Learn more",
+      bullets: [
+        "Pay via Raast, card, or wallet",
+        "Earn points; redeem with local brands",
+        "English/Urdu, light/dark, mobile-first",
+      ],
+    },
+    adminLanding: {
+      title: "RentBack Admin",
+      subtitle:
+        "Secure operations console for payouts, reconciliation, rewards, tenants, and staff roles.",
+      signInAdmin: "Sign in to Admin",
+      goToMain: "Go to Main Site",
+      notes: [
+        "Access is restricted to admin@rentback.app and approved staff.",
+        "Least-privilege roles, audit logs, and 2FA recommended.",
+        "Use a secure device and private network when accessing Admin.",
+      ],
+      dashboardSample: {
+        collectedToday: "Collected (Today)",
+        openTickets: "Open Tickets",
+        pendingPayouts: "Pending Payouts",
+        riskFlags: "Risk Flags",
+        tagPreview: "Review queue",
+      },
+    },
   },
-  landing: {
-    heroTitle: "Pay rent, earn rewards.",
-    heroSubtitle:
-      "A modern rent-payments experience for Pakistan — Raast, cards & wallets, and a local rewards marketplace.",
-    bullets: [
-      "Pay via Raast, card, or wallet",
-      "Earn points and redeem with local brands",
-      "English/Urdu, light/dark, mobile-first",
-    ],
-    cta: "Get started",
-    ctaPrimary: "Get started",
-    ctaSecondary: "Learn more",
-  },
-  adminLanding: {
-    heroTitle: "RentBack Admin",
-    heroSubtitle:
-      "Secure operations console for payouts, reconciliation, rewards, tenants, and staff roles.",
-    notes: [
-      "Access is restricted to admin@rentback.app and approved staff.",
-      "Least-privilege roles, audit logs, and 2FA recommended.",
-      "Use a secure device and private network when accessing Admin.",
-    ],
-    signInAdmin: "Sign in to Admin",
-    goToMain: "Go to Main Site",
-    dashboardSample: {
-      collectedToday: "Collected Today",
-      openTickets: "Open Tickets",
-      pendingPayouts: "Pending Payouts",
-      riskFlags: "Risk Flags",
-      tagPreview: "Mock admin widgets for preview only.",
+  ur: {
+    common: {
+      brand: "رینٹ بیک",
+      signIn: "سائن اِن",
+      founder: "بانی",
+      admin: "ایڈمن",
+      mainSite: "مرکزی سائٹ",
+      privacy: "پرائیویسی",
+      terms: "شرائط",
+      contact: "رابطہ",
+      demo: "ڈیمو موڈ میں جاری رکھیں",
+    },
+    landing: {
+      h1a: "کِرایہ دیں، انعام پائیں۔",
+      h1b: "پاکستان کے لیے جدید رینٹ پیمنٹس۔",
+      heroSubtitle:
+        "راست، کارڈز اور والٹس، اور مقامی انعامات مارکیٹ پلیس۔",
+      cta: "شروع کریں",
+      ctaSecondary: "مزید جانیں",
+      bullets: [
+        "راست، کارڈ یا والٹ کے ذریعے ادائیگی",
+        "پوائنٹس کمائیں؛ مقامی برانڈز پر ریڈیم کریں",
+        "اردو/انگریزی، لائٹ/ڈارک، موبائل فرسٹ",
+      ],
+    },
+    adminLanding: {
+      title: "رینٹ بیک ایڈمن",
+      subtitle:
+        "پے آؤٹس، ریکنسیلی ایشن، ریوارڈز، کرایہ دار اور اسٹاف رولز کے لیے محفوظ کنسول۔",
+      signInAdmin: "ایڈمن میں سائن اِن کریں",
+      goToMain: "مرکزی سائٹ پر جائیں",
+      notes: [
+        "رسائی صرف admin@rentback.app اور منظور شدہ اسٹاف تک محدود ہے۔",
+        "کم سے کم مراعات والے رولز، آڈٹ لاگز اور 2FA تجویز کی جاتی ہے۔",
+        "ایڈمن تک رسائی کے لیے محفوظ ڈیوائس اور نجی نیٹ ورک استعمال کریں۔",
+      ],
+      dashboardSample: {
+        collectedToday: "آج موصول",
+        openTickets: "کھلے ٹکٹس",
+        pendingPayouts: "زیرِالتوا پے آؤٹس",
+        riskFlags: "رسک فلیگز",
+        tagPreview: "جائزہ قطار",
+      },
     },
   },
 };
 
-const ur: Copy = {
-  common: {
-    signIn: "سائن اِن",
-    privacy: "پرائیویسی",
-    terms: "شرائط",
-    contact: "رابطہ",
-    founder: "بانی",
-    admin: "ایڈمن",
-    mainSite: "مین سائٹ",
-    continueDemo: "ڈیمو موڈ جاری رکھیں",
-  },
-  landing: {
-    heroTitle: "کرایہ ادا کریں، انعام کمائیں۔",
-    heroSubtitle:
-      "پاکستان کے لیے جدید کرایہ ادائیگی — راست، کارڈز/والٹس، اور مقامی ریوارڈز مارکیٹ پلیس۔",
-    bullets: [
-      "راست، کارڈ یا والٹ کے ذریعے ادائیگی",
-      "پوائنٹس کمائیں اور مقامی برانڈز پر ریڈیم کریں",
-      "انگریزی/اردو، لائٹ/ڈارک، موبائل فرسٹ",
-    ],
-    cta: "شروع کریں",
-    ctaPrimary: "شروع کریں",
-    ctaSecondary: "مزید جانیں",
-  },
-  adminLanding: {
-    heroTitle: "RentBack Admin",
-    heroSubtitle:
-      "پے آؤٹس، ریکنسِلی ایشن، ریوارڈز، کرایہ داران اور اسٹاف رولز کے لیے محفوظ کنسول۔",
-    notes: [
-      "رسائی صرف admin@rentback.app اور منظور شدہ اسٹاف کے لیے ہے۔",
-      "کم سے کم اختیارات والے رولز، آڈٹ لاگز اور 2FA کی تجویز دی جاتی ہے۔",
-      "ایڈمن تک رسائی کے لیے محفوظ ڈیوائس اور پرائیویٹ نیٹ ورک استعمال کریں۔",
-    ],
-    signInAdmin: "ایڈمن میں سائن اِن",
-    goToMain: "مین سائٹ پر جائیں",
-    dashboardSample: {
-      collectedToday: "آج جمع شدہ",
-      openTickets: "کھلی ٹکٹس",
-      pendingPayouts: "زیر التواء ادائیگیاں",
-      riskFlags: "رسک فلیگز",
-      tagPreview: "صرف پیش نظارہ کے لیے موک ویجٹس۔",
-    },
-  },
-};
-
-export function getLang(): Lang {
-  const c = cookies();
-  const val = c.get("rb_lang")?.value as Lang | undefined;
-  return val === "ur" ? "ur" : "en";
-}
-
-export function getTheme(): Theme {
-  const c = cookies();
-  const val = c.get("rb_theme")?.value as Theme | undefined;
-  return val === "dark" ? "dark" : "light";
-}
-
-export function getDir(lang?: Lang): "ltr" | "rtl" {
-  const l = lang ?? getLang();
-  return l === "ur" ? "rtl" : "ltr";
-}
-
-export function getCopy(lang?: Lang): Copy {
-  const l = lang ?? getLang();
-  return l === "ur" ? ur : en;
-}
+export const getCopy = (lang: Lang = getLang()): Copy => COPY[lang];
