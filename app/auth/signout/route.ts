@@ -1,11 +1,21 @@
-// WEB: app/auth/sign-out/route.ts
-import { cookies } from 'next/headers';
-import { NextResponse } from 'next/server';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+// app/auth/signout/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { createRouteSupabase } from "../../../lib/supabase/server";
 
-export async function POST(request: Request) {
-  const supabase = createRouteHandlerClient({ cookies });
-  await supabase.auth.signOut();
-  const url = new URL(request.url);
-  return NextResponse.redirect(new URL('/', url.origin));
+export const dynamic = "force-dynamic";
+
+export async function GET(req: NextRequest) {
+  const supabase = createRouteSupabase();
+  try {
+    await supabase.auth.signOut();
+  } catch {
+    // ignore: signOut is best-effort
+  }
+  const url = new URL("/", req.url);
+  const res = NextResponse.redirect(url);
+
+  // Clear our role cookie too
+  res.cookies.set("rb_role", "", { path: "/", maxAge: 0 });
+
+  return res;
 }
