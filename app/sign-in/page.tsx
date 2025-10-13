@@ -1,47 +1,28 @@
-// USE IN WEB REPO ONLY: rentback-app-web
-// app/sign-in/page.tsx
-"use client";
-
+// WEB: place in rentback-app-web/app/sign-in/page.tsx
+import Brand from "@/components/Brand";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import Brand from "@/components/Brand"; // ✅ default import
 
 export default function SignInPage() {
-  const sp = useSearchParams();
-  const error = sp.get("error");
-
   return (
-    <section className="mx-auto max-w-lg py-16 px-4 space-y-6">
-      <div className="flex items-center gap-3">
-        <Brand />
+    <div className="mx-auto max-w-md">
+      <div className="mb-6">
+        <Brand href="/" />
       </div>
-
-      <h1 className="text-3xl font-extrabold tracking-tight">Sign in</h1>
-
-      {error ? (
-        <div className="rounded-lg border border-red-300/40 bg-red-500/10 text-red-800 dark:text-red-200 px-4 py-3 text-sm">
-          {error}
-        </div>
-      ) : null}
-
-      <p className="text-sm text-neutral-600 dark:text-neutral-300">
-        This is a placeholder sign-in page. We’ll hook up Supabase auth next.
+      <h1 className="text-2xl font-bold mb-2">Sign in</h1>
+      <p className="text-sm opacity-80 mb-6">
+        Magic link/OTP UI placeholder. This is a demo-only screen.
       </p>
-
-      <div className="flex items-center gap-3">
+      <div className="grid gap-3">
+        <button className="px-4 py-3 rounded-xl font-semibold bg-emerald-600 hover:bg-emerald-700 text-white">
+          Continue with Email
+        </button>
         <Link
           href="/"
-          className="px-4 py-2 rounded-lg border border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/10"
+          className="px-4 py-3 rounded-xl font-semibold border border-neutral-200 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/10 text-center"
         >
-          Go home
+          Continue in Demo Mode
         </Link>
-        <a
-          href="https://admin.rentback.app"
-          className="px-4 py-2 rounded-lg border border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/10"
-        >
-          Admin
-        </a>
       </div>
-    </section>
+    </div>
   );
 }
