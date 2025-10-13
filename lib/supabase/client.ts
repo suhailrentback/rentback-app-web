@@ -1,7 +1,7 @@
-// WEB: lib/supabase/client.ts
-'use client';
+// WEB /lib/supabase/client.ts
+import { createClient } from '@supabase/supabase-js';
 
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-export const supabaseClient = createClientComponentClient();
-export default supabaseClient;
+export const supabaseClient = createClient(url, anon);
