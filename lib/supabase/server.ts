@@ -5,15 +5,12 @@ import {
   createRouteHandlerClient,
 } from '@supabase/auth-helpers-nextjs'
 
-// Canonical helpers (no explicit return types — let TS infer)
 export function createServerSupabase() {
+  // Server component usage (SSR)
   return createServerComponentClient({ cookies })
 }
 
 export function createRouteSupabase() {
+  // Route handlers / server actions
   return createRouteHandlerClient({ cookies })
 }
-
-// Back-compat exports for any existing imports
-export const supabaseServer = createServerSupabase
-export const supabaseRoute = createRouteSupabase
