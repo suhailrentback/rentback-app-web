@@ -8,7 +8,7 @@ import {
 } from "@supabase/auth-helpers-nextjs";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-// Loosen generics to avoid "GenericSchema" vs "public" TS friction on Vercel.
+// Loosen generics to avoid "GenericSchema" vs "public" inference friction on Vercel.
 export function createServerSupabase(): SupabaseClient {
   return createServerComponentClient({ cookies }) as unknown as SupabaseClient;
 }
@@ -17,6 +17,6 @@ export function createRouteSupabase(): SupabaseClient {
   return createRouteHandlerClient({ cookies }) as unknown as SupabaseClient;
 }
 
-// Back-compat aliases used by some files.
+// Back-compat aliases used in a few files.
 export const supabaseServer = createServerSupabase;
 export const supabaseRoute = createRouteSupabase;
