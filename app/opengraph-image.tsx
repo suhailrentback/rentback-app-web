@@ -1,7 +1,6 @@
-// app/opengraph-image.tsx  <-- add this ONLY in the WEB repo (rentback-app-web)
+// WEB /app/opengraph-image.tsx
 import { ImageResponse } from "next/og";
-export const runtime = "edge";
-export const alt = "RentBack – Pay rent, earn rewards";
+
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -10,39 +9,36 @@ export default function OG() {
     (
       <div
         style={{
-          width: "100%",
           height: "100%",
+          width: "100%",
           display: "flex",
           flexDirection: "column",
-          justifyContent: "space-between",
-          padding: 64,
+          justifyContent: "center",
           background:
-            "linear-gradient(135deg, #111827 0%, #065F46 50%, #10B981 100%)",
+            "linear-gradient(135deg, #0b0b0b 0%, #0b0b0b 60%, #0d1f1a 100%)",
           color: "white",
-          fontFamily: "system-ui, Segoe UI, Roboto, Helvetica, Arial",
+          padding: 80,
+          fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial",
         }}
       >
-        <div style={{ fontSize: 56, fontWeight: 900, lineHeight: 1.1 }}>
-          <div>
-            <span>Rent</span>
-            <span style={{ color: "#34D399" }}>Back</span>
-          </div>
-          <div style={{ marginTop: 12, fontWeight: 700, fontSize: 44 }}>
-            Pay rent, earn rewards.
+        <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+          {/* roof mark */}
+          <svg width="56" height="56" viewBox="0 0 24 24" fill="none">
+            <path d="M3 11.5L12 4l9 7.5" stroke="#10B981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M5 10v9h14v-9" stroke="#10B981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          <div style={{ fontSize: 84, fontWeight: 800, letterSpacing: -1 }}>
+            RentBack
           </div>
         </div>
-
-        <div style={{ fontSize: 28, opacity: 0.95 }}>
-          Raast, cards & wallets — built for Pakistan
+        <div style={{ marginTop: 18, fontSize: 28, opacity: 0.9 }}>
+          Pay rent, earn rewards — Pakistan-first experience.
         </div>
-
-        <div style={{ display: "flex", gap: 16, fontSize: 22, opacity: 0.9 }}>
-          <div>• Raast native</div>
-          <div>• Rewards marketplace</div>
-          <div>• English / اردو</div>
+        <div style={{ marginTop: 30, fontSize: 22, color: "#A7F3D0" }}>
+          www.rentback.app
         </div>
       </div>
     ),
-    size
+    { ...size }
   );
 }
