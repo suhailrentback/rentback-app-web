@@ -1,26 +1,28 @@
-// PLACE THIS FILE IN BOTH REPOS:
-// - web:   /components/Brand.tsx
-// - admin: /components/Brand.tsx
-// Renders the SVG logo + the "RentBack" wordmark exactly as written.
-
+// WEB: place in rentback-app-web/components/Brand.tsx
+import Link from "next/link";
+import Image from "next/image";
 import React from "react";
 
 type Props = {
+  href?: string;
   className?: string;
-  size?: number; // icon height in px
+  size?: number; // logo size in px (square)
 };
 
-export default function Brand({ className, size = 22 }: Props) {
-  return (
-    <div className={`inline-flex items-center gap-2 ${className ?? ""}`}>
-      <img
+export default function Brand({ href, className, size = 28 }: Props) {
+  const content = (
+    <span className={`inline-flex items-center gap-2 ${className ?? ""}`}>
+      {/* Uses your existing public/rentback-logo.svg */}
+      <Image
         src="/rentback-logo.svg"
-        alt="RentBack logo"
+        alt="RentBack"
         width={size}
         height={size}
-        className="inline-block"
+        priority
       />
-      <span className="text-base font-bold tracking-[-0.01em]">RentBack</span>
-    </div>
+      <span className="font-bold tracking-tight">RentBack</span>
+    </span>
   );
+
+  return href ? <Link href={href}>{content}</Link> : content;
 }
