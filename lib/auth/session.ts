@@ -1,8 +1,9 @@
 // lib/auth/session.ts
-import { supabaseServer } from '@/lib/supabase/server';
+import { createServerSupabase } from '@/lib/supabase/server'
 
 export async function getSessionUser() {
-  const supabase = supabaseServer();
-  const { data } = await supabase.auth.getUser();
-  return data.user ?? null;
+  const supabase = createServerSupabase()
+  const { data: { user }, error } = await supabase.auth.getUser()
+  if (error) return null
+  return user
 }
