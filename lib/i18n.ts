@@ -1,15 +1,14 @@
-// ✅ COPY–PASTE THIS FILE INTO *BOTH* PROJECTS:
+// ✅ COPY–PASTE THIS FILE INTO *BOTH* PROJECTS
 // WEB:   /rentback-app-web/lib/i18n.ts
 // ADMIN: /rentback-admin-web/lib/i18n.ts
 
 import type { cookies as CookiesFn } from "next/headers";
 
-/** ========== Types ========== */
 export type Lang = "en" | "ur";
 export type Theme = "light" | "dark";
 
 export type CommonCopy = {
-  brand: string;     // “RentBack” (logo text)
+  brand: string;
   signIn: string;
   admin: string;
   mainSite: string;
@@ -20,20 +19,21 @@ export type CommonCopy = {
 };
 
 export type LandingCopy = {
-  // Used by web/app/page.tsx
+  // used by WEB /app/page.tsx
   h1: string;
   sub: string;
   cta: string;
-  learn: string;     // <- required by your page for the secondary button
+  learn: string;
+  bullets: string[]; // <- added so t.bullets works
 };
 
 export type AdminLandingCopy = {
-  // Used by admin/app/page.tsx
+  // used by ADMIN /app/page.tsx
   title: string;
   subtitle: string;
-  cta: string;        // keep for compatibility
-  signInCta: string;  // <- page expects this name
-  bullets: string[];  // <- page maps over this
+  cta: string;
+  signInCta: string;
+  bullets: string[];
 };
 
 export type Copy = {
@@ -42,7 +42,6 @@ export type Copy = {
   adminLanding: AdminLandingCopy;
 };
 
-/** ========== Dictionaries ========== */
 const COPY: Record<Lang, Copy> = {
   en: {
     common: {
@@ -61,6 +60,11 @@ const COPY: Record<Lang, Copy> = {
         "A modern rent-payments experience for Pakistan — Raast, cards & wallets, and a local rewards marketplace.",
       cta: "Get started",
       learn: "Learn more",
+      bullets: [
+        "Raast, cards & wallets — demo flow",
+        "Earn local rewards on rent",
+        "English + Urdu (RTL) supported",
+      ],
     },
     adminLanding: {
       title: "RentBack Admin",
@@ -91,6 +95,11 @@ const COPY: Record<Lang, Copy> = {
         "پاکستان کے لیے جدید رینٹ پیمنٹس — راست، کارڈز و والیٹس، اور مقامی ریوارڈز مارکیٹ پلیس۔",
       cta: "شروع کریں",
       learn: "مزید جانیں",
+      bullets: [
+        "راست، کارڈز اور والیٹس — ڈیمو فلو",
+        "کرائے پر مقامی انعامات حاصل کریں",
+        "انگریزی + اردو (RTL) سپورٹڈ",
+      ],
     },
     adminLanding: {
       title: "RentBack ایڈمن",
@@ -106,16 +115,14 @@ const COPY: Record<Lang, Copy> = {
   },
 };
 
-/** ========== Cookie helpers (SSR/CSR safe) ========== */
+/* ------------ cookie helpers (SSR + CSR safe) ------------ */
 function readCookie(name: string): string | undefined {
-  // Client side
   if (typeof document !== "undefined") {
     const m = document.cookie.match(
-      new RegExp("(^|; )" + name.replace(/[-[\]{}()*+?.,\\^$|#\\s]/g, "\\$&") + "=([^;]*)")
+      new RegExp("(^|; )" + name.replace(/[-[\\]{}()*+?.,\\\\^$|#\\s]/g, "\\$&") + "=([^;]*)")
     );
     return m ? decodeURIComponent(m[2]) : undefined;
   }
-  // Server side (Next.js)
   try {
     const { cookies } = require("next/headers") as { cookies: typeof CookiesFn };
     return cookies().get(name)?.value;
@@ -124,21 +131,18 @@ function readCookie(name: string): string | undefined {
   }
 }
 
-/** ========== Public API used by your pages/components ========== */
+/* ------------ public API used in your pages ------------ */
 export function getCopy(lang: Lang): Copy {
   return COPY[lang] ?? COPY.en;
 }
-
 export function getLang(): Lang {
   const v = readCookie("rb-lang");
   return v === "ur" ? "ur" : "en";
 }
-
 export function getTheme(): Theme {
   const v = readCookie("rb-theme");
   return v === "dark" ? "dark" : "light";
 }
-
 export function getDir(lang?: Lang): "ltr" | "rtl" {
   const l = lang ?? getLang();
   return l === "ur" ? "rtl" : "ltr";
