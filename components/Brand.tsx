@@ -1,10 +1,28 @@
-// USE IN BOTH REPOS: rentback-app-web AND rentback-admin-web
-// components/Brand.tsx
-export default function Brand() {
+// components/Brand.tsx  (copy into BOTH web + admin repos)
+import Image from "next/image";
+import Link from "next/link";
+
+export default function Brand({ href = "/" }: { href?: string }) {
   return (
-    <div className="font-extrabold tracking-tight text-lg">
-      <span>Rent</span>
-      <span className="text-emerald-600">Back</span>
-    </div>
+    <Link href={href} aria-label="RentBack home" className="inline-flex items-center gap-2">
+      {/* Shown in light theme */}
+      <Image
+        src="/logo-wordmark-dark.svg"
+        alt="RentBack"
+        width={132}
+        height={28}
+        priority
+        className="block dark:hidden h-7 w-auto"
+      />
+      {/* Shown in dark theme */}
+      <Image
+        src="/logo-wordmark-light.svg"
+        alt="RentBack"
+        width={132}
+        height={28}
+        priority
+        className="hidden dark:block h-7 w-auto"
+      />
+    </Link>
   );
 }
