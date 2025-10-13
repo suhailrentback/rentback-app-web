@@ -6,7 +6,7 @@ import {
 } from '@supabase/auth-helpers-nextjs'
 
 export function createServerSupabase() {
-  // Server component usage (SSR)
+  // Server components (SSR)
   return createServerComponentClient({ cookies })
 }
 
