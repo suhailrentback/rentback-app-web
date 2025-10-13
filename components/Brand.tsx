@@ -1,53 +1,63 @@
-// ADD THIS FILE TO: /components/Brand.tsx  (web) AND /components/Brand.tsx (admin)
+// ADD THIS FILE IN BOTH REPOS:
+// - /components/Brand.tsx  (web)
+// - /components/Brand.tsx  (admin)
+//
+// This component restores your original logo and supports BOTH
+// default and named imports to avoid build errors.
 
+/* eslint-disable react/jsx-no-useless-fragment */
 "use client";
 
 import Image from "next/image";
 import Link from "next/link";
 
+// IMPORTANT: We point to YOUR original file here.
+// Put your original logo at: /public/rentback-logo.svg (both repos).
+const LOGO_SRC = "/rentback-logo.svg";
+
+// Adjust if your SVG/PNG has different natural size.
+// (These are just display dimensions; Next will serve the static file.)
+const LOGO_WIDTH = 156;
+const LOGO_HEIGHT = 40;
+
 type Props = {
-  href?: string;          // default "/"
+  href?: string;      // default "/"
   className?: string;
-  title?: string;         // accessible label, default "RentBack"
-  width?: number;         // image width, default 132
-  height?: number;        // image height, default 32
+  title?: string;     // accessible label
+  width?: number;
+  height?: number;
 };
 
-/**
- * Brand logo component for header and other placements.
- * Uses /public/logo.svg by default. Replace that file with your official logo anytime.
- */
 function BrandComp({
   href = "/",
   className = "",
   title = "RentBack",
-  width = 132,
-  height = 32,
+  width = LOGO_WIDTH,
+  height = LOGO_HEIGHT,
 }: Props) {
   const logo = (
     <span className={`inline-flex items-center ${className}`}>
       <Image
-        src="/logo.svg"
+        src={LOGO_SRC}
         alt={title}
         width={width}
         height={height}
         priority
       />
-      {/* On logo-only headers we keep the wordmark inside the SVG; screen-readers get this: */}
+      {/* Wordmark is in the image; screen-readers still get a label: */}
       <span className="sr-only">{title}</span>
     </span>
   );
 
-  // Clickable brand (link to home) by default
   return href ? (
-    <Link href={href} className="inline-flex items-center" aria-label={title}>
+    <Link href={href} aria-label={title} className="inline-flex items-center">
       {logo}
     </Link>
   ) : (
-    logo
+    <>{logo}</>
   );
 }
 
 export default BrandComp;
-// Named export for compatibility with any existing `import { Brand } ...` usage
+// Also export a named version for any `import { Brand } ...` usage.
 export { BrandComp as Brand };
