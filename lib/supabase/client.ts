@@ -1,6 +1,6 @@
 // WEB: lib/supabase/client.ts
-// Wave 1.1 stub — satisfies TypeScript and keeps Vercel green.
-// We will replace this with the real Supabase client in Wave 1.2.
+// Wave 1.1 stub — object-shaped client to match current AuthForm usage.
+// Purpose: Keep Vercel green without real Supabase wiring (Wave 1.2 will replace).
 
 type SignInWithOtpArgs = {
   email: string;
@@ -21,35 +21,33 @@ type SupabaseAuthStub = {
   signOut(): Promise<SignOutResult>;
 };
 
-type SupabaseClientStub = {
+export type SupabaseClientStub = {
   auth: SupabaseAuthStub;
 };
 
+const notReadyMsg = 'Auth not wired yet (Wave 1.2).';
+
+const auth: SupabaseAuthStub = {
+  async signInWithOtp(_args) {
+    if (typeof window !== 'undefined') {
+      console.warn(notReadyMsg);
+      // Optional UX: you can show a toast here if you have a global toaster
+      // but we avoid any UI changes in Wave 1.1.
+    }
+    return { data: null, error: { message: notReadyMsg } };
+  },
+  async signOut() {
+    return { error: null };
+  },
+};
+
 /**
- * Exported API expected by components:
- *   const sb = supabaseClient();
- *   await sb.auth.signInWithOtp({ email })
+ * The object your components expect:
+ *   supabaseClient.auth.signInWithOtp(...)
  */
-export function supabaseClient(): SupabaseClientStub {
-  const notReady = 'Auth not wired yet (Wave 1.2).';
+export const supabaseClient: SupabaseClientStub = { auth };
 
-  const auth: SupabaseAuthStub = {
-    async signInWithOtp(_args) {
-      if (typeof window !== 'undefined') {
-        // Non-blocking notice to avoid silent clicks in dev.
-        // No visual change unless the user clicks the button.
-        console.warn(notReady);
-      }
-      return { data: null, error: { message: notReady } };
-    },
-    async signOut() {
-      return { error: null };
-    },
-  };
-
-  return { auth };
-}
-
-// Optional convenience export if someone imports a ready client elsewhere.
-// (Does not change behavior; kept for compatibility.)
-export const supabase = supabaseClient();
+// Transitional aliases in case any code uses other names.
+// (Safe to keep; Wave 1.2 will replace with the real client.)
+export const supabase = supabaseClient;
+export default supabaseClient;
