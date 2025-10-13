@@ -1,4 +1,4 @@
-// ✅ COPY–PASTE THIS FILE INTO *BOTH* PROJECTS
+// ✅ COPY–PASTE THIS FILE INTO *BOTH* REPOS
 // WEB:   /rentback-app-web/lib/i18n.ts
 // ADMIN: /rentback-admin-web/lib/i18n.ts
 
@@ -24,7 +24,7 @@ export type LandingCopy = {
   sub: string;
   cta: string;
   learn: string;
-  bullets: string[]; // <- added so t.bullets works
+  bullets: string[];
 };
 
 export type AdminLandingCopy = {
@@ -115,14 +115,16 @@ const COPY: Record<Lang, Copy> = {
   },
 };
 
-/* ------------ cookie helpers (SSR + CSR safe) ------------ */
+/* ------------ cookie helpers (SSR + CSR safe, no regex) ------------ */
 function readCookie(name: string): string | undefined {
+  // Client: parse document.cookie safely (no regex to avoid build issues)
   if (typeof document !== "undefined") {
-    const m = document.cookie.match(
-      new RegExp("(^|; )" + name.replace(/[-[\\]{}()*+?.,\\\\^$|#\\s]/g, "\\$&") + "=([^;]*)")
-    );
-    return m ? decodeURIComponent(m[2]) : undefined;
+    const cookies = document.cookie ? document.cookie.split("; ") : [];
+    const prefix = name + "=";
+    const found = cookies.find((c) => c.startsWith(prefix));
+    return found ? decodeURIComponent(found.slice(prefix.length)) : undefined;
   }
+  // Server: Next.js headers API (guarded for non-server contexts)
   try {
     const { cookies } = require("next/headers") as { cookies: typeof CookiesFn };
     return cookies().get(name)?.value;
