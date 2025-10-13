@@ -1,20 +1,24 @@
-// app/auth/callback/route.ts
-import { NextRequest, NextResponse } from 'next/server'
+// WEB /app/auth/callback/route.ts
+import { NextResponse } from 'next/server'
 import { createRouteSupabase } from '@/lib/supabase/server'
 
-export const runtime = 'nodejs' // avoid Edge runtime limitations
-
-export async function GET(req: NextRequest) {
-  const url = new URL(req.url)
+export async function GET(request: Request) {
+  const url = new URL(request.url)
   const code = url.searchParams.get('code')
-  const next = url.searchParams.get('next') || '/tenant' // default target for the consumer app
+  const next = url.searchParams.get('next') || '/tenant'
 
-  const supabase = createRouteSupabase()
-
-  if (code) {
-    // Exchanges ?code=... for a session cookie (HttpOnly)
-    await supabase.auth.exchangeCodeForSession(code)
+  if (!code) {
+    return NextResponse.redirect(new URL('/sign-in?error=missing_code', url))
   }
 
-  return NextResponse.redirect(new URL(next, url.origin))
+  const supabase = createRouteSupabase()
+  const { error } = await supabase.auth.exchangeCodeForSession(code)
+  if (error) {
+    const msg = encodeURIComponent(error.message)
+    return NextResponse.redirect(new URL(`/sign-in?error=${msg}`, url))
+  }
+
+  // (Optional) upsert profile here later once DB is ready.
+
+  return NextResponse.redirect(new URL(next, url))
 }
