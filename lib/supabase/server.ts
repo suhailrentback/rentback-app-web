@@ -17,7 +17,8 @@ export function createServerSupabase(): SupabaseClient {
 }
 
 /**
- * Route Handler helper (files in /app/**/route.ts)
+ * Route Handler helper for files like: /app/[...]/route.ts
+ * (We avoid writing the `**/` sequence inside comments because `*/` closes the block.)
  */
 export function createRouteSupabase(): SupabaseClient {
   return createRouteHandlerClient({ cookies }) as unknown as SupabaseClient;
