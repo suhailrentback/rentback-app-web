@@ -1,28 +1,40 @@
 // WEB: place in rentback-app-web/components/Brand.tsx
 import Link from "next/link";
-import Image from "next/image";
 import React from "react";
 
 type Props = {
   href?: string;
   className?: string;
-  size?: number; // logo size in px (square)
+  size?: number;     // logo size in px (icon square)
+  color?: string;    // stroke color for the mark
 };
 
-export default function Brand({ href, className, size = 28 }: Props) {
+// Inline brand mark (matches your reference code)
+function BrandMark({ size = 22, color = "#059669" }: { size?: number; color?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke={color}
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M3 11.5L12 4l9 7.5" />
+      <path d="M5 10v9h14v-9" />
+    </svg>
+  );
+}
+
+export default function Brand({ href, className, size = 22, color = "#059669" }: Props) {
   const content = (
     <span className={`inline-flex items-center gap-2 ${className ?? ""}`}>
-      {/* Uses your existing public/rentback-logo.svg */}
-      <Image
-        src="/rentback-logo.svg"
-        alt="RentBack"
-        width={size}
-        height={size}
-        priority
-      />
+      <BrandMark size={size} color={color} />
       <span className="font-bold tracking-tight">RentBack</span>
     </span>
   );
-
   return href ? <Link href={href}>{content}</Link> : content;
 }
