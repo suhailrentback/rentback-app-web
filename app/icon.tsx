@@ -1,29 +1,5 @@
-// app/icon.tsx  <-- add this in BOTH repos (web + admin)
-import { ImageResponse } from "next/og";
-
-export const runtime = "edge";
-
-export default function Icon() {
-  return new ImageResponse(
-    (
-      <div
-        style={{
-          height: "100%",
-          width: "100%",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: "#059669", // emerald-600
-          color: "white",
-          fontSize: 18,
-          fontWeight: 800,
-          letterSpacing: 0.5,
-          fontFamily: "system-ui, Segoe UI, Roboto, Helvetica, Arial",
-        }}
-      >
-        RB
-      </div>
-    ),
-    { width: 32, height: 32 }
-  );
-}
+<!-- WEB /app/icon.svg  (favicon) -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <path d="M3 11.5L12 4l9 7.5" stroke="#059669" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M5 10v9h14v-9" stroke="#059669" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
