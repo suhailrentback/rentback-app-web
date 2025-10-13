@@ -1,28 +1,53 @@
-// components/Brand.tsx  (copy into BOTH web + admin repos)
+// ADD THIS FILE TO: /components/Brand.tsx  (web) AND /components/Brand.tsx (admin)
+
+"use client";
+
 import Image from "next/image";
 import Link from "next/link";
 
-export default function Brand({ href = "/" }: { href?: string }) {
-  return (
-    <Link href={href} aria-label="RentBack home" className="inline-flex items-center gap-2">
-      {/* Shown in light theme */}
+type Props = {
+  href?: string;          // default "/"
+  className?: string;
+  title?: string;         // accessible label, default "RentBack"
+  width?: number;         // image width, default 132
+  height?: number;        // image height, default 32
+};
+
+/**
+ * Brand logo component for header and other placements.
+ * Uses /public/logo.svg by default. Replace that file with your official logo anytime.
+ */
+function BrandComp({
+  href = "/",
+  className = "",
+  title = "RentBack",
+  width = 132,
+  height = 32,
+}: Props) {
+  const logo = (
+    <span className={`inline-flex items-center ${className}`}>
       <Image
-        src="/logo-wordmark-dark.svg"
-        alt="RentBack"
-        width={132}
-        height={28}
+        src="/logo.svg"
+        alt={title}
+        width={width}
+        height={height}
         priority
-        className="block dark:hidden h-7 w-auto"
       />
-      {/* Shown in dark theme */}
-      <Image
-        src="/logo-wordmark-light.svg"
-        alt="RentBack"
-        width={132}
-        height={28}
-        priority
-        className="hidden dark:block h-7 w-auto"
-      />
+      {/* On logo-only headers we keep the wordmark inside the SVG; screen-readers get this: */}
+      <span className="sr-only">{title}</span>
+    </span>
+  );
+
+  // Clickable brand (link to home) by default
+  return href ? (
+    <Link href={href} className="inline-flex items-center" aria-label={title}>
+      {logo}
     </Link>
+  ) : (
+    logo
   );
 }
+
+export default BrandComp;
+// Named export for compatibility with any existing `import { Brand } ...` usage
+export { BrandComp as Brand };
