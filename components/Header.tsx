@@ -1,32 +1,39 @@
-// WEB: place in rentback-app-web/components/Header.tsx
-import Link from "next/link";
-import Brand from "@/components/Brand";
-import ThemeLangToggle from "@/components/ThemeLangToggle";
-import { getLang, getTheme, getCopy } from "@/lib/i18n";
+// components/Header.tsx
+// Server component: reads session, shows email + Sign out (no brand changes)
 
-export default function Header() {
+import Link from "next/link";
+import { cookies } from "next/headers";
+
+import Brand from "./Brand";
+import ThemeLangToggle from "./ThemeLangToggle";
+import { getLang } from "../lib/i18n";
+import { getTheme } from "../lib/theme";
+import { createServerSupabase } from "../lib/supabase/server";
+import AuthButton from "./AuthButton";
+
+export default async function Header() {
   const lang = getLang();
   const theme = getTheme();
-  const t = getCopy(lang).common;
+
+  // Session (server-side)
+  const supabase = createServerSupabase();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const email = user?.email ?? null;
 
   return (
     <header className="sticky top-0 z-40 backdrop-blur bg-white/70 dark:bg-neutral-950/60 border-b border-black/5 dark:border-white/10">
       <div className="mx-auto max-w-6xl px-4 h-14 flex items-center justify-between">
+        {/* Brand stays exactly as you have it */}
         <Brand href="/" />
+
+        {/* Right side controls: theme/lang + auth */}
         <nav className="flex items-center gap-2">
           <ThemeLangToggle initialLang={lang} initialTheme={theme} />
-          <Link
-            href="/sign-in"
-            className="px-3 py-2 text-sm rounded-lg hover:bg-black/5 dark:hover:bg-white/10"
-          >
-            {t.signIn}
-          </Link>
-          <a
-            href="https://admin.rentback.app"
-            className="px-3 py-2 text-sm rounded-lg hover:bg-black/5 dark:hover:bg-white/10"
-          >
-            {t.admin}
-          </a>
+          {/* Auth UI (minimal) */}
+          <AuthButton email={email} />
         </nav>
       </div>
     </header>
