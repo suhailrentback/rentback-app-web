@@ -1,49 +1,22 @@
-// WEB: /app/auth/callback/page.tsx
-// Landing page after clicking the magic link. We just confirm session existence.
-// No header or layout changes.
+// WEB: app/auth/callback/page.tsx
+// Safe, dependency-free auth callback screen for Wave 1.1
+// (We’ll add Supabase code-exchange in Wave 1.2.)
 
-'use client';
+export const dynamic = 'force-dynamic';
 
-import * as React from 'react';
-import { supabase } from '@/lib/supabaseClient';
+export const metadata = {
+  robots: { index: false, follow: false },
+  title: 'Signing you in… | RentBack',
+};
 
 export default function AuthCallbackPage() {
-  const [state, setState] = React.useState<'checking' | 'ok' | 'no-session'>('checking');
-  const [email, setEmail] = React.useState<string>('');
-
-  React.useEffect(() => {
-    let mounted = true;
-    (async () => {
-      const { data } = await supabase.auth.getUser();
-      if (!mounted) return;
-      if (data?.user?.email) {
-        setEmail(data.user.email);
-        setState('ok');
-      } else {
-        setState('no-session');
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
   return (
-    <section className="py-16 max-w-md mx-auto px-4">
-      <h1 className="text-2xl font-bold">Sign-in Status</h1>
-      <div className="mt-4 text-sm">
-        {state === 'checking' && 'Checking your session...'}
-        {state === 'ok' && (
-          <div className="space-y-2">
-            <div className="text-emerald-600">You’re signed in.</div>
-            <div className="text-neutral-600 dark:text-neutral-300">Email: {email}</div>
-          </div>
-        )}
-        {state === 'no-session' && (
-          <div className="text-red-600">
-            No active session was found. Please request a new magic link.
-          </div>
-        )}
+    <section className="min-h-[60vh] grid place-items-center p-6">
+      <div className="max-w-md text-center space-y-2">
+        <h1 className="text-2xl font-bold">Signing you in…</h1>
+        <p className="text-neutral-600 dark:text-neutral-300 text-sm">
+          This is the secure callback. You can close this window.
+        </p>
       </div>
     </section>
   );
