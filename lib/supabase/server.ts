@@ -2,15 +2,13 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 /**
- * Server-side Supabase client for RSC and route handlers.
- * Uses the public anon key and does not persist sessions on the server.
+ * Server-side Supabase client for RSC, layouts, and route handlers.
+ * Uses anon key; no cookie/session work here (keeps build green).
  */
 export function createServerSupabase(): SupabaseClient {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
-  // Note: we do not throw on missing envs here to keep builds green.
-  // If envs are missing at runtime, Supabase calls will fail clearly.
   return createClient(url, anon, {
     auth: {
       persistSession: false,
@@ -18,3 +16,9 @@ export function createServerSupabase(): SupabaseClient {
     },
   });
 }
+
+/**
+ * Back-compat alias: some routes import { createRouteSupabase }.
+ * Export it so we don't have to touch those routes.
+ */
+export const createRouteSupabase = createServerSupabase;
