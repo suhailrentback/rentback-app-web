@@ -1,18 +1,27 @@
-// WEB: /lib/supabaseClient.ts
-// Safe client-only Supabase instance. If env vars are missing, this still builds.
-// Do NOT move this to server in this wave (1.0). Guards come in 1.1/1.3.
+// lib/supabaseClient.ts
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-'use client';
+let browserClient: SupabaseClient | null = null;
 
-import { createClient } from '@supabase/supabase-js';
+/**
+ * Browser-side Supabase client.
+ * - Persists session in the browser
+ * - Safe to call multiple times; returns a singleton
+ */
+export function getSupabaseBrowser(): SupabaseClient {
+  if (browserClient) return browserClient;
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
-export const supabase = createClient(url, anon, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    detectSessionInUrl: true,
-  },
-});
+  // Do not throw at build-time if envs are missing; runtime will surface a clear error.
+  browserClient = createClient(url, anon, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  });
+
+  return browserClient;
+}
