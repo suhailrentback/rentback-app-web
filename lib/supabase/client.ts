@@ -1,21 +1,12 @@
-// lib/supabase/client.ts
-import { createBrowserClient } from "@supabase/ssr";
-import type { SupabaseClient } from "@supabase/supabase-js";
+// rentback-app-web/lib/supabaseClient.ts
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-let singleton: SupabaseClient | null = null;
+let client: SupabaseClient | null = null;
 
-export function createBrowserSupabase(): SupabaseClient {
-  if (singleton) return singleton;
-
-  singleton = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  ) as unknown as SupabaseClient;
-
-  return singleton;
+export function getSupabaseBrowser(): SupabaseClient {
+  if (client) return client;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
+  client = createClient(url, key, { auth: { persistSession: true, autoRefreshToken: true } });
+  return client;
 }
-
-// Back-compat alias used by some components
-export const supabaseClient = createBrowserSupabase;
-
-export type { SupabaseClient } from "@supabase/supabase-js";
