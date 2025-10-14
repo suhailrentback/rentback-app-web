@@ -3,7 +3,7 @@
 export const runtime = 'nodejs';
 
 import { NextResponse } from 'next/server';
-import { createServerSupabase } from '@/lib/supabase/server';
+import { createClient } from '@supabase/supabase-js';
 
 /** Minimal PDF generator (no external deps). Renders simple text lines. */
 function createSimplePdf(lines: string[]): Uint8Array {
@@ -22,7 +22,7 @@ function createSimplePdf(lines: string[]): Uint8Array {
   const parts = [header, obj1, obj2, obj3, obj4, obj5];
   const offsets: number[] = [];
   let cursor = 0;
-  const all = parts.map(p => {
+  const buffers = parts.map(p => {
     const b = Buffer.from(p, 'utf8');
     offsets.push(cursor);
     cursor += b.length;
@@ -35,7 +35,7 @@ function createSimplePdf(lines: string[]): Uint8Array {
     xref += `${offsets[i].toString().padStart(10, '0')} 00000 n \n`;
   }
   const trailer = `trailer\n<< /Size ${count} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
-  const result = Buffer.concat([...all, Buffer.from(xref + trailer, 'utf8')]);
+  const result = Buffer.concat([...buffers, Buffer.from(xref + trailer, 'utf8')]);
   return new Uint8Array(result);
 }
 
@@ -52,9 +52,13 @@ export async function GET(req: Request, ctx: { params: { paymentId: string } }) 
   if (!paymentId) return NextResponse.json({ error: 'Missing paymentId' }, { status: 400 });
   if (!token) return NextResponse.json({ error: 'Missing access token' }, { status: 401 });
 
-  // Build a Supabase client that forwards the bearer token for RLS
-  const supabase = createServerSupabase() as any;
-  (supabase as any)['headers'] = { Authorization: `Bearer ${token}` }; // supabase-js respects global headers per client
+  // Create a Supabase client that forwards the bearer token for RLS
+  const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
+  const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
+  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  });
 
   // Load payment with tenant & lease context
   const { data: row, error } = await supabase
@@ -75,7 +79,6 @@ export async function GET(req: Request, ctx: { params: { paymentId: string } }) 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  // If RLS denies, we get null; but we already used the user's token; if row exists, they’re authorized.
   const unit = row.lease?.unit;
   const prop = unit?.property;
 
@@ -94,7 +97,11 @@ export async function GET(req: Request, ctx: { params: { paymentId: string } }) 
   ];
 
   const pdf = createSimplePdf(lines);
-  return new NextResponse(pdf, {
+
+  // Convert Uint8Array -> ArrayBuffer slice (typed BodyInit for NextResponse)
+  const ab = pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength);
+
+  return new NextResponse(ab, {
     status: 200,
     headers: {
       'Content-Type': 'application/pdf',
