@@ -1,5 +1,5 @@
-// app/tenant/lease/page.tsx
-import { createServerSupabase } from "../../lib/supabase/server";
+// Recommended (with tsconfig alias)
+import { createServerSupabase } from "@/lib/supabase/server";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
