@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from 'react';
 import { getSupabaseBrowser } from '@/lib/supabaseClient';
+import { useI18n } from '@/lib/i18n/index';
 
 type Offer = {
   id: string;
@@ -14,6 +15,8 @@ type Offer = {
 
 export default function TenantRewardsPage() {
   const supabase = getSupabaseBrowser();
+  const { t, lang } = useI18n();
+
   const [balance, setBalance] = useState<number>(0);
   const [offers, setOffers] = useState<Offer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,18 +41,19 @@ export default function TenantRewardsPage() {
   useEffect(() => {
     (async () => {
       const { data: sess } = await supabase.auth.getSession();
-      if (!sess?.session) { setError('Please sign in'); setLoading(false); return; }
+      if (!sess?.session) { setError(t('common.signInRequired')); setLoading(false); return; }
       await load();
       setLoading(false);
     })();
-  }, [supabase]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supabase, lang]);
 
   async function redeem(offerId: string) {
     setBusy(offerId); setOk(null); setError(null);
     try {
       const res = await supabase.rpc('redeem_offer', { p_offer_id: offerId });
       if (res.error) throw res.error;
-      setOk('Redeemed!');
+      setOk(t('rewards.redeemed'));
       await load();
     } catch (e: any) {
       setError(e.message ?? 'Redeem failed');
@@ -58,49 +62,54 @@ export default function TenantRewardsPage() {
     }
   }
 
-  if (loading) return <div className="p-6">Loading rewards…</div>;
-  if (error) return <div className="p-6 text-red-600">Error: {error}</div>;
+  if (loading) return <div className="p-6" role="status" aria-live="polite">{t('common.loading')}</div>;
+  if (error) return <div className="p-6 text-red-600" role="alert" aria-live="assertive">Error: {error}</div>;
 
   return (
     <div className="p-6 space-y-6 max-w-3xl">
-      <h1 className="text-2xl font-semibold">My Rewards</h1>
+      <h1 className="text-2xl font-semibold">{t('rewards.title')}</h1>
 
-      <div className="rounded-xl border p-4">
-        <div className="text-sm opacity-70">Points Balance</div>
+      <div className="rounded-xl border p-4" aria-live="polite" role="status">
+        <div className="text-sm opacity-70">{t('rewards.balance')}</div>
         <div className="text-2xl font-semibold">{balance}</div>
       </div>
 
       <div>
-        <h2 className="text-lg font-semibold mb-2">Available Offers</h2>
+        <h2 className="text-lg font-semibold mb-2">{t('rewards.availableOffers')}</h2>
         <div className="grid gap-3">
           {offers.length === 0 && (
-            <div className="rounded-xl border p-4">No offers right now.</div>
+            <div className="rounded-xl border p-4">{t('rewards.noOffers')}</div>
           )}
           {offers.map(o => {
             const expired = o.expires_at ? new Date(o.expires_at) <= new Date() : false;
-            const disabled = expired || (o.stock !== null && o.stock <= 0) || balance < o.points_cost || busy === o.id;
+            const disabled =
+              expired || (o.stock !== null && o.stock <= 0) || balance < o.points_cost || busy === o.id;
             return (
               <div key={o.id} className="rounded-xl border p-4 flex items-center justify-between">
                 <div>
                   <div className="font-medium">{o.name}</div>
                   <div className="text-sm opacity-70">
-                    Cost: {o.points_cost} pts
-                    {o.stock !== null ? ` · Stock: ${o.stock}` : ' · Unlimited'}
-                    {o.expires_at ? ` · Expires: ${new Date(o.expires_at).toLocaleDateString()}` : ''}
+                    {t('rewards.cost')}: {o.points_cost} pts
+                    {' · '}
+                    {t('rewards.stock')}: {o.stock !== null ? o.stock : t('rewards.unlimited')}
+                    {o.expires_at ? ` · ${t('rewards.expires')}: ${new Date(o.expires_at).toLocaleDateString()}` : ''}
                   </div>
                 </div>
                 <button
                   onClick={() => redeem(o.id)}
                   disabled={disabled}
+                  aria-disabled={disabled}
+                  aria-busy={busy===o.id}
+                  aria-label={busy===o.id ? t('rewards.redeeming') : t('rewards.redeem')}
                   className="rounded-lg border px-3 py-1"
                 >
-                  {busy === o.id ? 'Redeeming…' : 'Redeem'}
+                  {busy === o.id ? t('rewards.redeeming') : t('rewards.redeem')}
                 </button>
               </div>
             );
           })}
         </div>
-        {ok && <div className="text-green-700 text-sm mt-2">{ok}</div>}
+        {ok && <div className="text-green-700 text-sm mt-2" role="status" aria-live="polite">{ok}</div>}
       </div>
     </div>
   );
