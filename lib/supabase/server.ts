@@ -1,42 +1,20 @@
 // lib/supabase/server.ts
-import { cookies } from "next/headers";
-import { createServerClient, type CookieOptions } from "@supabase/ssr";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 /**
- * Server Component helper (for app/**/page.tsx, app/**/layout.tsx)
- * Keep this comment simple to avoid SWC parsing quirks.
+ * Server-side Supabase client for RSC and route handlers.
+ * Uses the public anon key and does not persist sessions on the server.
  */
 export function createServerSupabase(): SupabaseClient {
-  const store = cookies();
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) {
-          return store.get(name)?.value;
-        },
-        set(name: string, value: string, options: CookieOptions) {
-          store.set({ name, value, ...options });
-        },
-        remove(name: string, options: CookieOptions) {
-          store.set({ name, value: "", ...options, maxAge: 0 });
-        },
-      },
-    }
-  ) as unknown as SupabaseClient;
+  // Note: we do not throw on missing envs here to keep builds green.
+  // If envs are missing at runtime, Supabase calls will fail clearly.
+  return createClient(url, anon, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
 }
-
-/** Route Handler helper (for app/**/route.ts files) */
-export function createRouteSupabase(): SupabaseClient {
-  // In our setup, route handlers can share the same adapter safely.
-  return createServerSupabase();
-}
-
-/** Back-compat aliases used in older code */
-export const supabaseServer = createServerSupabase;
-export const supabaseRoute = createRouteSupabase;
-
-export type { SupabaseClient } from "@supabase/supabase-js";
