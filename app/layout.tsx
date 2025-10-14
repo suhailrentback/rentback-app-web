@@ -1,7 +1,7 @@
 // app/layout.tsx
 import type { Metadata } from 'next';
 import { getLangFromCookies } from '@/lib/i18n/server';
-import { I18nProvider } from '@/lib/i18n';
+import { I18nProvider } from '@/lib/i18n/index';
 import FloatingLangSwitch from '@/components/FloatingLangSwitch';
 
 export const metadata: Metadata = {
@@ -21,11 +21,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           href="#main"
           className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:rounded-md focus:bg-white focus:px-3 focus:py-2 focus:shadow"
         >
-          {/* Using EN text; the link is visible only when focused. */}
           Skip to main content
         </a>
 
-        {/* Global focus ring (in case Tailwind focus styles are minimal) */}
+        {/* Global focus ring */}
         <style
           dangerouslySetInnerHTML={{
             __html: `
