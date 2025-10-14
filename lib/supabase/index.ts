@@ -5,4 +5,9 @@ export {
   supabaseServer,
   supabaseRoute,
 } from "./server";
-export { createBrowserSupabase, supabaseClient } from "./client";
+
+export {
+  getSupabaseBrowser as createBrowserSupabase,
+  getSupabaseBrowser,
+  supabase as supabaseClient,
+} from "../supabaseClient";
