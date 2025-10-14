@@ -14,6 +14,6 @@ export function createRouteSupabase(): SupabaseClient {
   return createRouteHandlerClient({ cookies }) as unknown as SupabaseClient;
 }
 
-// Back-compat aliases (so old imports still work)
+// Back-compat aliases if other files still import old names
 export const supabaseServer = createServerSupabase;
 export const supabaseRoute = createRouteSupabase;
