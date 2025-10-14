@@ -126,8 +126,12 @@ export async function GET(req: Request, ctx: { params: { paymentId: string } }) 
 
   const pdf = createSimplePdf(lines);
 
-  // ✅ Wrap bytes in a Blob to satisfy BodyInit typing cleanly
-  const blob = new Blob([pdf], { type: 'application/pdf' });
+  // ✅ Build a fresh ArrayBuffer (avoids SharedArrayBuffer typing)
+  const ab = new ArrayBuffer(pdf.byteLength);
+  new Uint8Array(ab).set(pdf);
+
+  // Wrap in Blob to satisfy BodyInit typing cleanly
+  const blob = new Blob([ab], { type: 'application/pdf' });
 
   return new NextResponse(blob, {
     status: 200,
