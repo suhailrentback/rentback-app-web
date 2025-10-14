@@ -126,10 +126,10 @@ export async function GET(req: Request, ctx: { params: { paymentId: string } }) 
 
   const pdf = createSimplePdf(lines);
 
-  // Convert Uint8Array -> ArrayBuffer for NextResponse
-  const ab = pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength);
+  // ✅ Wrap bytes in a Blob to satisfy BodyInit typing cleanly
+  const blob = new Blob([pdf], { type: 'application/pdf' });
 
-  return new NextResponse(ab, {
+  return new NextResponse(blob, {
     status: 200,
     headers: {
       'Content-Type': 'application/pdf',
