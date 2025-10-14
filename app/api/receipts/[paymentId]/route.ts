@@ -5,6 +5,32 @@ export const runtime = 'nodejs';
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
+/** ----- Types to force correct relation shapes (no arrays) ----- */
+type PaymentRow = {
+  id: string;
+  amount: number;
+  status: 'PENDING' | 'CONFIRMED';
+  reference: string | null;
+  paid_at: string | null;
+  created_at: string;
+  lease: {
+    id: string;
+    monthly_rent: number;
+    landlord_id: string | null;
+    unit: {
+      unit_number: string | null;
+      property: {
+        name: string | null;
+        address: string | null;
+      } | null;
+    } | null;
+  } | null;
+  tenant: {
+    full_name: string | null;
+    email: string | null;
+  } | null;
+};
+
 /** Minimal PDF generator (no external deps). Renders simple text lines. */
 function createSimplePdf(lines: string[]): Uint8Array {
   const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
@@ -61,7 +87,7 @@ export async function GET(req: Request, ctx: { params: { paymentId: string } }) 
   });
 
   // Load payment with tenant & lease context
-  const { data: row, error } = await supabase
+  const resp = await supabase
     .from('payment')
     .select(`
       id, amount, status, reference, paid_at, created_at,
@@ -76,7 +102,9 @@ export async function GET(req: Request, ctx: { params: { paymentId: string } }) 
     .eq('id', paymentId)
     .maybeSingle();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (resp.error) return NextResponse.json({ error: resp.error.message }, { status: 500 });
+
+  const row = resp.data as unknown as PaymentRow | null;
   if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const unit = row.lease?.unit;
@@ -98,7 +126,7 @@ export async function GET(req: Request, ctx: { params: { paymentId: string } }) 
 
   const pdf = createSimplePdf(lines);
 
-  // Convert Uint8Array -> ArrayBuffer slice (typed BodyInit for NextResponse)
+  // Convert Uint8Array -> ArrayBuffer for NextResponse
   const ab = pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength);
 
   return new NextResponse(ab, {
