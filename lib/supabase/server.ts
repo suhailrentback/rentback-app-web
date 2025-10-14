@@ -17,8 +17,7 @@ export function createServerSupabase(): SupabaseClient {
   });
 }
 
-/**
- * Back-compat alias: some routes import { createRouteSupabase }.
- * Export it so we don't have to touch those routes.
- */
+/** Back-compat aliases: keep old imports working without touching routes */
 export const createRouteSupabase = createServerSupabase;
+export const supabaseServer = createServerSupabase;
+export const supabaseRoute = createServerSupabase;
