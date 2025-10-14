@@ -1,25 +1,15 @@
 // app/layout.tsx
+import './globals.css';
 import type { Metadata } from 'next';
 import { getLangFromCookies } from '@/lib/i18n/server';
-import { I18nProvider, useI18n } from '@/lib/i18n/index';
+import { I18nProvider } from '@/lib/i18n/index';
 import FloatingLangSwitch from '@/components/FloatingLangSwitch';
+import SkipLink from '@/components/SkipLink';
 
 export const metadata: Metadata = {
   title: 'RentBack',
   description: 'RentBack',
 };
-
-function SkipLink() {
-  const { t } = useI18n();
-  return (
-    <a
-      href="#main"
-      className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:rounded-md focus:bg-white focus:px-3 focus:py-2 focus:shadow"
-    >
-      {t('a11y.skip')}
-    </a>
-  );
-}
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const lang = getLangFromCookies();
