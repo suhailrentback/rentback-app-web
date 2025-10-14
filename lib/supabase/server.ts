@@ -1,6 +1,4 @@
 // lib/supabase/server.ts
-// Canonical Supabase helpers for server components and route handlers.
-
 import { cookies } from "next/headers";
 import {
   createServerComponentClient,
@@ -8,16 +6,24 @@ import {
 } from "@supabase/auth-helpers-nextjs";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-// Server Components (e.g. app/tenant/page.tsx, layouts, etc.)
+/**
+ * Server Component helper for files like: app/**/page.tsx and app/**/layout.tsx
+ * (No regex-looking comment tokens; keep this block simple to avoid SWC parsing issues.)
+ */
 export function createServerSupabase(): SupabaseClient {
   return createServerComponentClient({ cookies }) as unknown as SupabaseClient;
 }
 
-// Route Handlers (e.g. app/**/route.ts files)
+/**
+ * Route Handler helper for files like: app/**/route.ts
+ */
 export function createRouteSupabase(): SupabaseClient {
   return createRouteHandlerClient({ cookies }) as unknown as SupabaseClient;
 }
 
-// Back-compat aliases so older imports still work
+/**
+ * Back-compat aliases so older imports keep working without touching other files.
+ * You can migrate imports gradually to `createServerSupabase` / `createRouteSupabase`.
+ */
 export const supabaseServer = createServerSupabase;
 export const supabaseRoute = createRouteSupabase;
