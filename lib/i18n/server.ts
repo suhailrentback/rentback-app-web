@@ -1,8 +1,11 @@
 // lib/i18n/server.ts
 import { cookies } from "next/headers";
+import type { Lang } from "./shared";
+import { LANG_COOKIE, dirForLang } from "./shared";
 
-export type Lang = "en" | "ur";
-export const LANG_COOKIE = "rb_lang";
+/**
+ * Server-only helpers. Do NOT import this file from client components.
+ */
 
 export function getLangFromCookies(): Lang {
   const v = cookies().get(LANG_COOKIE)?.value;
@@ -10,5 +13,8 @@ export function getLangFromCookies(): Lang {
 }
 
 export function getDirForLang(lang: Lang): "ltr" | "rtl" {
-  return lang === "ur" ? "rtl" : "ltr";
+  return dirForLang(lang);
 }
+
+// Re-export types/constants for convenience in SERVER code only
+export { LANG_COOKIE, type Lang };
