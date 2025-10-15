@@ -2,8 +2,13 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-import type { Lang } from "./server";
-import { LANG_COOKIE } from "./server";
+import type { Lang } from "./shared";
+import { LANG_COOKIE, dirForLang } from "./shared";
+
+/**
+ * Client-side i18n context.
+ * IMPORTANT: Do NOT import server.ts here (it uses next/headers).
+ */
 
 type Ctx = {
   lang: Lang;
@@ -21,7 +26,7 @@ export function I18nProvider({
   initialLang?: Lang;
 }) {
   const [lang, setLang] = useState<Lang>(initialLang);
-  const dir: "ltr" | "rtl" = lang === "ur" ? "rtl" : "ltr";
+  const dir = dirForLang(lang);
 
   // Keep <html> in sync + persist cookie
   useEffect(() => {
