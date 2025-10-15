@@ -2,11 +2,10 @@
 
 // app/auth/callback/page.tsx
 // Handles BOTH Supabase flows:
-// - ?code=...  (PKCE): exchangeCodeForSession
-// - #access_token=...&refresh_token=... (implicit): setSession
+// 1) ?code=...  (PKCE): exchangeCodeForSession
+// 2) #access_token=...&refresh_token=... (implicit): setSession
 //
 // After success, redirects to ?next=... or "/".
-// Shows a tiny status while working. No external deps.
 
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -32,7 +31,7 @@ export default function AuthCallbackPage() {
         const code = search.get('code');
 
         if (code) {
-          // PKCE path: exchange code for a session
+          // PKCE flow: exchange the code for a session
           const { error } = await supabaseClient.auth.exchangeCodeForSession(code);
           if (error) throw error;
           if (!cancelled) {
@@ -42,7 +41,7 @@ export default function AuthCallbackPage() {
           return;
         }
 
-        // Implicit path: read access_token & refresh_token from hash
+        // Implicit flow: tokens arrive in the URL hash
         const hashParams = parseHashParams(window.location.hash);
         const access_token = hashParams.get('access_token');
         const refresh_token = hashParams.get('refresh_token');
@@ -60,7 +59,7 @@ export default function AuthCallbackPage() {
           return;
         }
 
-        // Neither flow provided tokens → bounce to sign-in with a friendly error
+        // Neither token style is present → send back to sign-in
         if (!cancelled) {
           setStatus('error');
           setMessage('Missing auth token. Redirecting to sign in…');
