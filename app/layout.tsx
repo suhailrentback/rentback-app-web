@@ -2,7 +2,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 
-import { I18nProvider } from "@/lib/i18n";
+import { I18nProvider } from "@/lib/i18n/index";
 import { getDirForLang, getLangFromCookies } from "@/lib/i18n/server";
 import FloatingLangSwitch from "@/components/FloatingLangSwitch";
 
