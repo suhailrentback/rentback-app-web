@@ -1,45 +1,41 @@
 // lib/i18n/index.tsx
-'use client';
+"use client";
 
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { dictionaries, type Locale } from './dictionaries';
+import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import type { Lang } from "./server";
+import { LANG_COOKIE } from "./server";
 
 type Ctx = {
-  lang: Locale;
-  setLang: (v: Locale) => void;
-  t: (key: string) => string;
+  lang: Lang;
+  setLang: (l: Lang) => void;
+  dir: "ltr" | "rtl";
 };
 
-const I18nContext = createContext<Ctx | null>(null);
+const I18nCtx = createContext<Ctx>({ lang: "en", setLang: () => {}, dir: "ltr" });
 
-export function I18nProvider({ initialLang, children }: { initialLang: Locale; children: React.ReactNode }) {
-  const [lang, setLangState] = useState<Locale>(initialLang);
+export function I18nProvider({
+  children,
+  initialLang = "en",
+}: {
+  children: React.ReactNode;
+  initialLang?: Lang;
+}) {
+  const [lang, setLang] = useState<Lang>(initialLang);
+  const dir: "ltr" | "rtl" = lang === "ur" ? "rtl" : "ltr";
 
-  const setLang = useCallback((v: Locale) => {
-    setLangState(v);
-    try {
-      document.cookie = `rb_lang=${v};path=/;max-age=31536000;SameSite=Lax`;
-      document.documentElement.setAttribute('dir', v === 'ur' ? 'rtl' : 'ltr');
-      document.documentElement.setAttribute('lang', v);
-    } catch { /* no-op */ }
-  }, []);
-
+  // Keep <html> in sync + persist cookie
   useEffect(() => {
-    // On first mount, ensure SSR attributes are synced on the client as well.
-    document.documentElement.setAttribute('dir', lang === 'ur' ? 'rtl' : 'ltr');
-    document.documentElement.setAttribute('lang', lang);
-  }, [lang]);
+    try {
+      document.documentElement.lang = lang;
+      document.documentElement.dir = dir;
+      document.cookie = `${LANG_COOKIE}=${lang}; path=/; max-age=31536000; samesite=lax`;
+    } catch {}
+  }, [lang, dir]);
 
-  const t = useCallback((key: string) => {
-    return (dictionaries[lang] && dictionaries[lang][key]) || key;
-  }, [lang]);
-
-  const value = useMemo(() => ({ lang, setLang, t }), [lang, setLang, t]);
-  return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
+  const value = useMemo(() => ({ lang, setLang, dir }), [lang, dir]);
+  return <I18nCtx.Provider value={value}>{children}</I18nCtx.Provider>;
 }
 
 export function useI18n() {
-  const ctx = useContext(I18nContext);
-  if (!ctx) throw new Error('useI18n must be used within I18nProvider');
-  return ctx;
+  return useContext(I18nCtx);
 }
