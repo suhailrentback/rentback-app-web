@@ -1,33 +1,41 @@
 // components/FloatingLangSwitch.tsx
-'use client';
+"use client";
 
-import { useI18n } from '@/lib/i18n/index';
+import { useI18n } from "@/lib/i18n";
 
 export default function FloatingLangSwitch() {
-  const { lang, setLang, t } = useI18n();
-  const toEN = () => setLang('en');
-  const toUR = () => setLang('ur');
+  const { lang, setLang } = useI18n();
 
   return (
-    <div className="fixed top-3 right-3 z-50 flex items-center gap-2 rounded-full border bg-white/80 backdrop-blur px-2 py-1 text-sm">
-      <span className="sr-only">{t('lang.label')}</span>
-      <button
-        type="button"
-        onClick={toEN}
-        aria-label={t('lang.switchToEnglish')}
-        className={`px-2 py-1 rounded ${lang === 'en' ? 'font-semibold underline' : ''} focus:outline-2 focus:outline-offset-2`}
+    <div className="fixed bottom-4 right-4 z-50">
+      <div
+        role="tablist"
+        aria-label="Language"
+        className="flex items-center gap-1 rounded-full border border-gray-200 bg-white p-1 shadow-sm"
       >
-        EN
-      </button>
-      <span aria-hidden>•</span>
-      <button
-        type="button"
-        onClick={toUR}
-        aria-label={t('lang.switchToUrdu')}
-        className={`px-2 py-1 rounded ${lang === 'ur' ? 'font-semibold underline' : ''} focus:outline-2 focus:outline-offset-2`}
-      >
-        اُردو
-      </button>
+        <button
+          role="tab"
+          aria-selected={lang === "en"}
+          aria-label="Switch to English"
+          onClick={() => setLang("en")}
+          className={`min-w-[44px] rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+            lang === "en" ? "bg-emerald-600 text-white" : "text-gray-700 hover:bg-gray-50"
+          }`}
+        >
+          EN
+        </button>
+        <button
+          role="tab"
+          aria-selected={lang === "ur"}
+          aria-label="Switch to Urdu"
+          onClick={() => setLang("ur")}
+          className={`min-w-[44px] rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+            lang === "ur" ? "bg-emerald-600 text-white" : "text-gray-700 hover:bg-gray-50"
+          }`}
+        >
+          اُردو
+        </button>
+      </div>
     </div>
   );
 }
