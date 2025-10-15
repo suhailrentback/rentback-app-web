@@ -1,41 +1,64 @@
 // components/Header.tsx
-// Server component: reads session, shows email + Sign out (no brand changes)
+// SERVER COMPONENT — safe to import server helpers here.
 
 import Link from "next/link";
-import { cookies } from "next/headers";
-
 import Brand from "./Brand";
 import ThemeLangToggle from "./ThemeLangToggle";
-import { getLang } from "../lib/i18n";
-import { getTheme } from "../lib/theme";
-import { createServerSupabase } from "../lib/supabase/server";
 import AuthButton from "./AuthButton";
 
-export default async function Header() {
-  const lang = getLang();
-  const theme = getTheme();
+import { getLangFromCookies } from "@/lib/i18n/server";
+import { createServerSupabase } from "@/lib/supabase/server";
 
-  // Session (server-side)
+export default async function Header() {
+  // Read language from cookies on the server (no client hook here)
+  const lang = getLangFromCookies();
+
+  // Session (server-side) so we can render AuthButton appropriately
   const supabase = createServerSupabase();
   const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  const email = user?.email ?? null;
+    data: { session },
+  } = await supabase.auth.getSession();
 
   return (
-    <header className="sticky top-0 z-40 backdrop-blur bg-white/70 dark:bg-neutral-950/60 border-b border-black/5 dark:border-white/10">
-      <div className="mx-auto max-w-6xl px-4 h-14 flex items-center justify-between">
-        {/* Brand stays exactly as you have it */}
-        <Brand href="/" />
+    <header className="sticky top-0 z-40 w-full border-b bg-white/80 backdrop-blur">
+      <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-3">
+        <Link href="/" aria-label="RentBack home" className="inline-flex items-center gap-2">
+          <Brand />
+        </Link>
 
-        {/* Right side controls: theme/lang + auth */}
-        <nav className="flex items-center gap-2">
-          <ThemeLangToggle initialLang={lang} initialTheme={theme} />
-          {/* Auth UI (minimal) */}
-          <AuthButton email={email} />
+        <nav className="hidden items-center gap-5 text-sm text-gray-700 md:flex">
+          <Link className="hover:text-emerald-700" href="/tenant">
+            Tenant
+          </Link>
+          <Link className="hover:text-emerald-700" href="/landlord">
+            Landlord
+          </Link>
+          <Link className="hover:text-emerald-700" href="/tenant/rewards">
+            Rewards
+          </Link>
         </nav>
+
+        <div className="flex items-center gap-2">
+          {/* Client component reads context; no props required */}
+          <ThemeLangToggle />
+
+          {/* Auth: session-aware client control */}
+          <AuthButton session={session} />
+
+          {/* Fallback sign-in (visible if AuthButton chooses not to show anything) */}
+          {!session && (
+            <Link
+              href="/sign-in"
+              className="hidden rounded-full border border-emerald-700/15 bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-600 md:inline-flex"
+            >
+              Sign in
+            </Link>
+          )}
+        </div>
       </div>
+
+      {/* Screen-reader hint for current language */}
+      <span className="sr-only">Language: {lang}</span>
     </header>
   );
 }
