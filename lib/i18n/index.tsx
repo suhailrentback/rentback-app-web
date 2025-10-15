@@ -5,11 +5,6 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from "
 import type { Lang } from "./shared";
 import { LANG_COOKIE, dirForLang } from "./shared";
 
-/**
- * Client-side i18n context.
- * IMPORTANT: Do NOT import server.ts here (it uses next/headers).
- */
-
 type Ctx = {
   lang: Lang;
   setLang: (l: Lang) => void;
@@ -28,7 +23,6 @@ export function I18nProvider({
   const [lang, setLang] = useState<Lang>(initialLang);
   const dir = dirForLang(lang);
 
-  // Keep <html> in sync + persist cookie
   useEffect(() => {
     try {
       document.documentElement.lang = lang;
