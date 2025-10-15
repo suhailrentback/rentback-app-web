@@ -19,6 +19,8 @@ export default async function Header() {
     data: { session },
   } = await supabase.auth.getSession();
 
+  const email = session?.user?.email ?? null;
+
   return (
     <header className="sticky top-0 z-40 w-full border-b bg-white/80 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-3">
@@ -42,14 +44,13 @@ export default async function Header() {
           {/* Client component reads context; no props required */}
           <ThemeLangToggle />
 
-          {/* Auth: session-aware client control */}
-          <AuthButton session={session} />
-
-          {/* Fallback sign-in (visible if AuthButton chooses not to show anything) */}
-          {!session && (
+          {/* Auth control: only render AuthButton when logged in, else show Sign in */}
+          {email ? (
+            <AuthButton email={email} />
+          ) : (
             <Link
               href="/sign-in"
-              className="hidden rounded-full border border-emerald-700/15 bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-600 md:inline-flex"
+              className="rounded-full border border-emerald-700/15 bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-600"
             >
               Sign in
             </Link>
