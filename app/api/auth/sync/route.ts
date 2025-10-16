@@ -1,56 +1,70 @@
 // app/api/auth/sync/route.ts
-import { NextResponse } from "next/server";
-import { createRouteSupabase } from "@/lib/supabase/server";
+import { NextRequest, NextResponse } from "next/server";
+import { createServerSupabase } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
-export async function GET() {
-  const supabase = createRouteSupabase();
+export async function GET(req: NextRequest) {
+  return sync(req);
+}
+export async function POST(req: NextRequest) {
+  return sync(req);
+}
 
+async function sync(req: NextRequest) {
+  const supabase = createServerSupabase();
   const {
     data: { user },
-    error: userErr,
   } = await supabase.auth.getUser();
 
-  if (userErr || !user) {
+  if (!user) {
     return NextResponse.json({ role: null }, { status: 401 });
   }
 
-  // Try to read the role without throwing if the row doesn't exist
-  const {
-    data: prof,
-    error: readErr,
-  } = await supabase
+  const email = user.email ?? "";
+  const isStaff = email.toLowerCase().endsWith("@rentback.app");
+  const defaultRole = (isStaff ? "staff" : "tenant") as "tenant" | "staff";
+
+  // 1) Read existing profile
+  const { data: existing } = await supabase
     .from("profiles")
-    .select("role")
-    .eq("id", user.id) // If your PK is user_id, change to .eq("user_id", user.id)
-    .maybeSingle();
+    .select("id, role, email")
+    .eq("id", user.id)
+    .single();
 
-  let role: string | null = prof?.role ?? null;
+  let role = existing?.role ?? null;
 
-  // If missing, upsert a default tenant record
-  if (!role) {
-    const { data: up, error: upErr } = await supabase
+  // 2) Upsert if missing
+  if (!existing) {
+    const { data: inserted } = await supabase
       .from("profiles")
-      .upsert(
-        {
-          id: user.id, // or user_id: user.id
-          email: user.email,
-          full_name: user.email ?? "",
-          role: "tenant",
-        },
-        { onConflict: "id" } // change to "user_id" if that’s your unique key
-      )
+      .insert({ id: user.id, email, role: defaultRole })
       .select("role")
       .single();
-
-    role = up?.role ?? null;
-
-    if (upErr) {
-      // Still return something useful so the client can decide what to do
-      return NextResponse.json({ role: null, error: upErr.message }, { status: 200 });
-    }
+    role = inserted?.role ?? defaultRole;
+  } else if (!role) {
+    const { data: updated } = await supabase
+      .from("profiles")
+      .update({ role: defaultRole })
+      .eq("id", user.id)
+      .select("role")
+      .single();
+    role = updated?.role ?? defaultRole;
   }
 
-  return NextResponse.json({ role }, { status: 200 });
+  // 3) Set a small, non-HttpOnly role cookie (middleware can read it)
+  const res = NextResponse.json({ role });
+  res.cookies.set("rb_role", role!, {
+    path: "/",
+    sameSite: "lax",
+    maxAge: 60 * 60 * 24 * 30,
+  });
+
+  // Optional: honor ?next=... if present
+  const next = req.nextUrl.searchParams.get("next");
+  if (next) {
+    res.headers.set("x-rb-next", next);
+  }
+
+  return res;
 }
