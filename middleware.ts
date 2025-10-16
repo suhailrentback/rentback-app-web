@@ -1,113 +1,106 @@
 // middleware.ts
-import { NextRequest, NextResponse } from "next/server";
-import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { NextRequest, NextResponse } from 'next/server';
+import { ROLE_COOKIE, pathAllowedForRole, roleToHome, type Role } from '@/lib/auth/roles';
+import { createServerClient } from '@supabase/ssr';
 
-// Paths that need auth/role checks
-const MATCHED = ["/tenant", "/landlord", "/admin"];
+const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+const PROTECTED_PREFIXES = ['/tenant', '/landlord', '/admin'];
 
 export async function middleware(req: NextRequest) {
-  const url = new URL(req.url);
-  const path = url.pathname;
+  const { pathname } = req.nextUrl;
 
-  // Run only for our matched paths + /sign-in (see config below)
+  // Only guard protected sections
+  if (!PROTECTED_PREFIXES.some((p) => pathname.startsWith(p))) {
+    return NextResponse.next();
+  }
+
+  // 1) Fast path: cookie
+  const cookieRole = (req.cookies.get(ROLE_COOKIE)?.value as Role | undefined) || undefined;
+  if (cookieRole) {
+    if (pathAllowedForRole(pathname, cookieRole)) {
+      return NextResponse.next();
+    }
+    // Role present but wrong area → not permitted
+    const res = NextResponse.redirect(new URL('/not-permitted', req.url));
+    return res;
+  }
+
+  // 2) Slow path: check Supabase once (also refresh cookie)
   const res = NextResponse.next();
-
-  // Build a Supabase server client for middleware (Edge)
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) {
-          return req.cookies.get(name)?.value;
-        },
-        set(name: string, value: string, options: CookieOptions) {
-          // Correct overload: (name, value, options)
-          res.cookies.set(name, value, options);
-        },
-        remove(name: string, options: CookieOptions) {
-          // Clear cookie with same scope
-          res.cookies.set(name, "", { ...options, maxAge: 0 });
-        },
+  const supabase = createServerClient(url, anon, {
+    cookies: {
+      get(name) {
+        return req.cookies.get(name)?.value;
       },
-    }
-  );
+      set(name, value, options) {
+        res.cookies.set({ name, value, ...(options || {}) });
+      },
+      remove(name, options) {
+        res.cookies.set({ name, value: '', ...(options || {}), maxAge: 0 });
+      },
+    },
+    global: { fetch },
+  });
 
-  // Who is the user?
-  const { data: userRes } = await supabase.auth.getUser();
-  const user = userRes?.user ?? null;
-
-  // Resolve user role (and ensure a profile row exists)
-  let role: "tenant" | "landlord" | "admin" | null = null;
-
-  if (user) {
-    // Try to read existing profile
-    const { data: profile, error: readErr } = await supabase
-      .from("profiles")
-      .select("id, role, email")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    if (!profile && !readErr) {
-      // Create a default profile row with role=tenant on first visit
-      const { data: inserted, error: insErr } = await supabase
-        .from("profiles")
-        .insert({
-          id: user.id,
-          email: user.email ?? null,
-          role: "tenant",
-        })
-        .select("role")
-        .single();
-
-      if (!insErr) role = (inserted?.role as any) ?? "tenant";
-    } else {
-      role = (profile?.role as any) ?? null;
-    }
+  // Make sure we have a session at all
+  const { data: { user } = { user: null } } = await supabase.auth.getUser();
+  if (!user) {
+    const signInUrl = new URL('/sign-in', req.url);
+    signInUrl.searchParams.set('next', pathname);
+    return NextResponse.redirect(signInUrl);
   }
 
-  // If no session and path requires auth → send to sign-in with next
-  const needsAuth = MATCHED.some((p) => path.startsWith(p));
-  if (!user && needsAuth) {
-    const signin = new URL("/sign-in", req.url);
-    signin.searchParams.set("next", path);
-    return NextResponse.redirect(signin);
+  // Fetch role from profiles; avoid chaining .catch on the builder
+  let role: Role | null = null;
+  try {
+    const { data } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single();
+    role = (data?.role as Role | null) ?? null;
+  } catch {
+    role = null;
   }
 
-  // If already signed in and visiting /sign-in → send to home area by role
-  if (user && path === "/sign-in") {
-    const dest =
-      role === "admin" ? "/admin" : role === "landlord" ? "/landlord" : "/tenant";
-    return NextResponse.redirect(new URL(dest, req.url));
-  }
-
-  // Role gating per section
-  if (user && needsAuth) {
-    const required: "tenant" | "landlord" | "admin" =
-      path.startsWith("/admin")
-        ? "admin"
-        : path.startsWith("/landlord")
-        ? "landlord"
-        : "tenant";
-
-    // If we still don't know the role, let /tenant pass (default),
-    // otherwise bounce to Not Permitted
-    if (!role) {
-      if (required !== "tenant") {
-        return NextResponse.redirect(new URL("/not-permitted", req.url));
-      }
-      return res;
-    }
-
-    if (role !== required) {
-      return NextResponse.redirect(new URL("/not-permitted", req.url));
+  // If still missing, default to tenant and persist (first-sign-in safety)
+  if (!role) {
+    role = (user.email?.toLowerCase().endsWith('@rentback.app') ? 'staff' : 'tenant') as Role;
+    try {
+      await supabase.from('profiles').upsert(
+        { id: user.id, email: user.email, role },
+        { onConflict: 'id' }
+      );
+    } catch {
+      // ignore
     }
   }
 
-  return res;
+  // Set/refresh short-lived role cookie
+  res.cookies.set(ROLE_COOKIE, role, {
+    path: '/',
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    maxAge: 60 * 20,
+  });
+
+  // Final access check
+  if (pathAllowedForRole(pathname, role)) {
+    return res;
+  }
+
+  // Wrong area → send them to their home
+  const redirectUrl = new URL(roleToHome(role), req.url);
+  return NextResponse.redirect(redirectUrl);
 }
 
-// Only run middleware for these routes
 export const config = {
-  matcher: ["/sign-in", "/tenant/:path*", "/landlord/:path*", "/admin/:path*"],
+  matcher: [
+    '/tenant/:path*',
+    '/landlord/:path*',
+    '/admin/:path*',
+  ],
 };
