@@ -1,17 +1,28 @@
-// app/tenant/layout.tsx
-import { ReactNode } from "react";
-import { redirect } from "next/navigation";
-import { createServerSupabase } from "@/lib/supabase/server";
+// app/layout.tsx
+import type { Metadata } from "next";
+import "./globals.css";
 
-export default async function TenantLayout({ children }: { children: ReactNode }) {
-  // Server-side: check only that the user is authenticated.
-  const supabase = await createServerSupabase();
-  const { data: { user } } = await supabase.auth.getUser();
+import { I18nProvider } from "@/lib/i18n/index";
+import { getDirForLang, getLangFromCookies } from "@/lib/i18n/server";
+import FloatingLangSwitch from "@/components/FloatingLangSwitch";
 
-  if (!user) {
-    redirect("/sign-in?next=/tenant");
-  }
+export const metadata: Metadata = {
+  title: "RentBack",
+  description: "Pay rent, earn rewards — with receipts and role-based access.",
+};
 
-  // ✅ No role/tenant-table check here (temporary).
-  return <>{children}</>;
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const initialLang = getLangFromCookies();
+  const dir = getDirForLang(initialLang);
+
+  return (
+    <html lang={initialLang} dir={dir} suppressHydrationWarning>
+      <body className="bg-white text-gray-900 antialiased">
+        <I18nProvider initialLang={initialLang}>
+          {children}
+          <FloatingLangSwitch />
+        </I18nProvider>
+      </body>
+    </html>
+  );
 }
