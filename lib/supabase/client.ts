@@ -1,12 +1,25 @@
-// rentback-app-web/lib/supabaseClient.ts
+'use client';
+
+// lib/supabase/client.ts
+// Canonical browser Supabase client for app/** client components.
+// Exports:
+//   - supabaseClient  (singleton)
+//   - createBrowserSupabase()  (returns the singleton)
+
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-let client: SupabaseClient | null = null;
+const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-export function getSupabaseBrowser(): SupabaseClient {
-  if (client) return client;
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
-  client = createClient(url, key, { auth: { persistSession: true, autoRefreshToken: true } });
-  return client;
+// Safe defaults for SPA flows
+export const supabaseClient: SupabaseClient = createClient(url, anon, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  },
+});
+
+export function createBrowserSupabase(): SupabaseClient {
+  return supabaseClient;
 }
