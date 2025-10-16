@@ -1,13 +1,10 @@
 // lib/supabase/index.ts
 export {
   createServerSupabase,
-  createRouteSupabase,
-  supabaseServer,
-  supabaseRoute,
+  // back-compat names other files import:
+  createServerSupabase as createRouteSupabase,
+  createServerSupabase as supabaseServer,
+  createServerSupabase as supabaseRoute,
 } from "./server";
 
-export {
-  getSupabaseBrowser as createBrowserSupabase,
-  getSupabaseBrowser,
-  supabase as supabaseClient,
-} from "../supabaseClient";
+export { createBrowserSupabase, supabaseClient } from "./client";
