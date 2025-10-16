@@ -1,25 +1,26 @@
-'use client';
-
 // lib/supabase/client.ts
-// Canonical browser Supabase client for app/** client components.
-// Exports:
-//   - supabaseClient  (singleton)
-//   - createBrowserSupabase()  (returns the singleton)
+import { createClient as createSupabaseClient, type SupabaseClient } from "@supabase/supabase-js";
 
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+/**
+ * Browser/client Supabase instance (uses anon key).
+ * No SSR helpers needed here.
+ */
+export function createClient(): SupabaseClient {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  if (!url || !anon) {
+    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  }
 
-// Safe defaults for SPA flows
-export const supabaseClient: SupabaseClient = createClient(url, anon, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    detectSessionInUrl: true,
-  },
-});
-
-export function createBrowserSupabase(): SupabaseClient {
-  return supabaseClient;
+  return createSupabaseClient(url, anon, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+    global: {
+      fetch: (...args) => fetch(...args),
+    },
+  });
 }
