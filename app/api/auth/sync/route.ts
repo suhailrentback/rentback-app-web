@@ -37,7 +37,7 @@ export async function POST(req: Request) {
     }
   );
 
-  // This writes the sb-* cookies onto the response
+  // Writes sb-* cookies onto the response
   await supabase.auth.setSession({ access_token, refresh_token });
 
   return res;
