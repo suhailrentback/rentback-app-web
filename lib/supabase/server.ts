@@ -1,33 +1,37 @@
 // lib/supabase/server.ts
 import { cookies } from "next/headers";
-import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { createServerClient } from "@supabase/ssr";
+import type { CookieOptions } from "@supabase/ssr";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 /**
- * Server-side Supabase client for reading the session in Server Components
- * and route handlers. Writes are no-ops here because most pages only need reads.
+ * Server-side Supabase using Next.js cookies.
+ * Works in Server Components, layouts, and Route Handlers.
  */
-export function createServerSupabase() {
-  const store = cookies();
+export async function createServerSupabase(): Promise<SupabaseClient> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  const cookieStore = cookies();
 
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) {
-          return store.get(name)?.value;
-        },
-        // No-ops in this read helper. If you need to write/delete in a route,
-        // do it on the response object in that specific route.
-        set(_name: string, _value: string, _options: CookieOptions) {},
-        remove(_name: string, _options: CookieOptions) {},
+  if (!url || !anon) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY");
+
+  return createServerClient(url, anon, {
+    cookies: {
+      get(name: string) {
+        return cookieStore.get(name)?.value;
       },
-    }
-  );
+      set(name: string, value: string, options: CookieOptions) {
+        cookieStore.set({ name, value, ...options });
+      },
+      remove(name: string, options: CookieOptions) {
+        cookieStore.set({ name, value: "", ...options, maxAge: 0 });
+      },
+    },
+  });
 }
 
 /**
- * Back-compat export so existing files that import `createRouteSupabase`
- * keep working without edits.
+ * Alias for older imports that expect `createRouteSupabase`.
+ * (Same behavior as createServerSupabase.)
  */
-export { createServerSupabase as createRouteSupabase };
+export const createRouteSupabase = createServerSupabase;
