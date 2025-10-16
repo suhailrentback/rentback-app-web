@@ -1,3 +1,3 @@
 // lib/supabase/index.ts
-export { createClient } from "./client";
-export { createServerSupabase, createRouteSupabase } from "./server";
+export { getSupabaseBrowser, createClient } from './client';
+export { createServerSupabase, createRouteSupabase } from './server';
