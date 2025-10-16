@@ -1,19 +1,11 @@
-// lib/supabase/server.ts
 import { cookies } from 'next/headers';
-import {
-  createServerClient,
-  type CookieOptions,
-  type SupabaseClient,
-} from '@supabase/ssr';
+import { createServerClient, type CookieOptions } from '@supabase/ssr';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-/**
- * Primary server-side Supabase client factory.
- * Works in Route Handlers, Server Components, and Middleware (when passed cookie bridges).
- */
-export function getSupabaseServer(): SupabaseClient<any, any, any> {
+/** Server/Route Supabase client (type inferred) */
+export function getSupabaseServer() {
   const store = cookies();
 
   return createServerClient(url, anon, {
@@ -22,21 +14,17 @@ export function getSupabaseServer(): SupabaseClient<any, any, any> {
         return store.get(name)?.value;
       },
       set(name: string, value: string, options?: CookieOptions) {
-        // Next 14 supports set(name, value, options)
-        store.set(name, value, options as any);
+        store.set(name, value, options);
       },
       remove(name: string, options?: CookieOptions) {
-        store.set(name, '', { ...(options as any), maxAge: 0 });
+        store.set(name, '', { ...(options || {}), maxAge: 0 });
       },
     },
     global: { fetch },
   });
 }
 
-/** ---- Back-compat named exports (aliases) ----
- * Some files import older helper names. These aliases make those imports work
- * without touching the rest of your codebase.
- */
+/** Back-compat exports so existing imports keep working */
 export const createServerSupabase = getSupabaseServer;
 export const createRouteSupabase = getSupabaseServer;
 export const supabaseServer = getSupabaseServer;
