@@ -1,23 +1,24 @@
 // lib/supabase/server.ts
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { cookies } from "next/headers";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
-/**
- * Server-side Supabase client for RSC, layouts, and route handlers.
- * Uses anon key; no cookie/session work here (keeps build green).
- */
-export function createServerSupabase(): SupabaseClient {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
-
-  return createClient(url, anon, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  });
+export function createServerSupabase() {
+  const store = cookies();
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return store.get(name)?.value;
+        },
+        set(_name: string, _value: string, _options: CookieOptions) {
+          // no-op on read helper
+        },
+        remove(_name: string, _options: CookieOptions) {
+          // no-op on read helper
+        },
+      },
+    }
+  );
 }
-
-/** Back-compat aliases: keep old imports working without touching routes */
-export const createRouteSupabase = createServerSupabase;
-export const supabaseServer = createServerSupabase;
-export const supabaseRoute = createServerSupabase;
