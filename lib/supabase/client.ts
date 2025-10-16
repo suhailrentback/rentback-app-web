@@ -1,14 +1,21 @@
-// lib/supabase/client.ts
 'use client';
 
-import { createBrowserClient, type SupabaseClient } from '@supabase/ssr';
+import { createBrowserClient } from '@supabase/ssr';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-export function getSupabaseBrowser(): SupabaseClient<any, any, any> {
-  // keep the typings relaxed to avoid schema generic mismatches
+/** Browser-side Supabase client */
+export function getSupabaseBrowser(): SupabaseClient {
   return createBrowserClient(url, anon, {
-    global: { fetch },
+    global: {
+      // TS-safe rest args so Next/TS 5 are happy
+      fetch: (...args: Parameters<typeof fetch>) => fetch(...args),
+    },
   });
 }
+
+/** Back-compat aliases (some files import these) */
+export const createClient = getSupabaseBrowser;
+export const supabaseClient = getSupabaseBrowser;
