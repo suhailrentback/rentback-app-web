@@ -19,7 +19,6 @@ function parseHashParams(hash: string): URLSearchParams {
 export default function AuthCallbackPage() {
   const router = useRouter();
   const search = useSearchParams();
-  const [status, setStatus] = useState<'working' | 'done' | 'error'>('working');
   const [message, setMessage] = useState<string>('Signing you in…');
 
   useEffect(() => {
@@ -31,17 +30,12 @@ export default function AuthCallbackPage() {
         const code = search.get('code');
 
         if (code) {
-          // PKCE flow: exchange the code for a session
           const { error } = await supabaseClient.auth.exchangeCodeForSession(code);
           if (error) throw error;
-          if (!cancelled) {
-            setStatus('done');
-            router.replace(next);
-          }
+          if (!cancelled) router.replace(next);
           return;
         }
 
-        // Implicit flow: tokens arrive in the URL hash
         const hashParams = parseHashParams(window.location.hash);
         const access_token = hashParams.get('access_token');
         const refresh_token = hashParams.get('refresh_token');
@@ -52,23 +46,18 @@ export default function AuthCallbackPage() {
             refresh_token,
           });
           if (error) throw error;
-          if (!cancelled) {
-            setStatus('done');
-            router.replace(next);
-          }
+          if (!cancelled) router.replace(next);
           return;
         }
 
         // Neither token style is present → send back to sign-in
         if (!cancelled) {
-          setStatus('error');
           setMessage('Missing auth token. Redirecting to sign in…');
           router.replace('/sign-in?error=missing_code');
         }
       } catch (err: any) {
         console.error('Auth callback error:', err);
         if (!cancelled) {
-          setStatus('error');
           setMessage(err?.message || 'Sign-in failed. Please try again.');
           router.replace('/sign-in?error=callback_failed');
         }
