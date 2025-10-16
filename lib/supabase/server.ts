@@ -1,23 +1,16 @@
 // lib/supabase/server.ts
-import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import {
+  createServerClient,
+  type CookieOptions,
+  type SupabaseClient,
+} from '@supabase/ssr';
 
-// Minimal cookie options we actually use.
-// (Avoids the union type problem that caused the previous TS error.)
-type CookieOptions = {
-  expires?: Date;
-  httpOnly?: boolean;
-  maxAge?: number;
-  path?: string;
-  sameSite?: 'lax' | 'strict' | 'none';
-  secure?: boolean;
-  domain?: string;
-};
+const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-export function createServerSupabase() {
+export function getSupabaseServer(): SupabaseClient<any, any, any> {
   const cookieStore = cookies();
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
   return createServerClient(url, anon, {
     cookies: {
@@ -25,22 +18,13 @@ export function createServerSupabase() {
         return cookieStore.get(name)?.value;
       },
       set(name: string, value: string, options?: CookieOptions) {
-        // Use the (name, value, options) overload; always set a path for consistency.
-        cookieStore.set(name, value, { path: '/', ...(options || {}) });
+        // Next 14 supports set(name, value, options)
+        cookieStore.set(name, value, options as any);
       },
       remove(name: string, options?: CookieOptions) {
-        // Clearing cookie by setting maxAge: 0; keep path consistent.
-        cookieStore.set(name, '', { path: '/', ...(options || {}), maxAge: 0 });
+        cookieStore.set(name, '', { ...(options as any), maxAge: 0 });
       },
     },
-    global: {
-      // TS 5-safe fetch passthrough
-      fetch: (...args: Parameters<typeof fetch>) => fetch(...args),
-    },
+    global: { fetch },
   });
 }
-
-// Alias for route handlers (app/api/.../route.ts)
-export const createRouteSupabase = createServerSupabase;
-
-export default createServerSupabase;
