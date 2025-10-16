@@ -2,10 +2,9 @@
 
 /**
  * app/auth/callback/page.tsx
- * Handles both Supabase flows:
- *   1) ?code=... (PKCE)  -> exchangeCodeForSession
- *   2) #access_token=...&refresh_token=... (implicit) -> setSession
- * Redirects to ?next=... if present, else role-aware default: /tenant or /landlord.
+ * Handles both Supabase flows (PKCE code or hash tokens),
+ * then syncs tokens to a secure server cookie via /api/auth/sync.
+ * Finally, redirect to ?next=... or a role-aware default.
  */
 
 import { useEffect, useState } from 'react';
@@ -18,15 +17,13 @@ function parseHashParams(hash: string): URLSearchParams {
 }
 
 async function resolveRoleDefault(): Promise<string> {
-  // Default destination if we can’t read a role
+  // Default destination if role missing
   let fallback = '/tenant';
-
   try {
     const { data: userRes } = await supabaseClient.auth.getUser();
     const user = userRes?.user;
     if (!user) return fallback;
 
-    // Try read role from your profile table (public.profile with user_id, role)
     const { data: profile } = await supabaseClient
       .from('profile')
       .select('role')
@@ -36,11 +33,36 @@ async function resolveRoleDefault(): Promise<string> {
     const role = profile?.role?.toUpperCase?.();
     if (role === 'LANDLORD') return '/landlord';
     if (role === 'TENANT') return '/tenant';
-    // STAFF/ADMIN don’t use this app’s domain; keep them out of here.
     return fallback;
   } catch {
     return fallback;
   }
+}
+
+async function syncServerCookieFromCurrentSession() {
+  const { data } = await supabaseClient.auth.getSession();
+  const session = data?.session;
+  if (!session?.access_token || !session?.refresh_token) return;
+
+  await fetch('/api/auth/sync', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      access_token: session.access_token,
+      refresh_token: session.refresh_token,
+    }),
+    // no-cache to avoid any proxy weirdness
+    cache: 'no-store',
+  }).catch(() => {});
+}
+
+async function syncServerCookieFromTokens(access_token: string, refresh_token: string) {
+  await fetch('/api/auth/sync', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ access_token, refresh_token }),
+    cache: 'no-store',
+  }).catch(() => {});
 }
 
 export default function AuthCallbackPage() {
@@ -53,40 +75,46 @@ export default function AuthCallbackPage() {
 
     (async () => {
       try {
-        const paramNext = search.get('next'); // may be '/', '', or null
+        const paramNext = search.get('next');
         const code = search.get('code');
 
         if (code) {
+          // PKCE: finish exchange in the browser
           const { error } = await supabaseClient.auth.exchangeCodeForSession(code);
           if (error) throw error;
 
+          // Sync to server cookie
+          await syncServerCookieFromCurrentSession();
+
           const dest =
             paramNext && paramNext !== '/' ? paramNext : await resolveRoleDefault();
-
           if (!cancelled) router.replace(dest);
           return;
         }
 
-        // Implicit hash tokens
+        // Hash tokens flow
         const hashParams = parseHashParams(window.location.hash);
         const access_token = hashParams.get('access_token');
         const refresh_token = hashParams.get('refresh_token');
 
         if (access_token && refresh_token) {
+          // Set in browser
           const { error } = await supabaseClient.auth.setSession({
             access_token,
             refresh_token,
           });
           if (error) throw error;
 
+          // Sync to server cookie
+          await syncServerCookieFromTokens(access_token, refresh_token);
+
           const dest =
             paramNext && paramNext !== '/' ? paramNext : await resolveRoleDefault();
-
           if (!cancelled) router.replace(dest);
           return;
         }
 
-        // Neither flow present → bounce to sign-in
+        // Neither flow present → back to sign-in
         if (!cancelled) {
           setMessage('Missing auth token. Redirecting to sign in…');
           router.replace('/sign-in?error=missing_code');
