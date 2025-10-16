@@ -1,11 +1,12 @@
 'use client';
 
-// app/auth/callback/page.tsx
-// Handles BOTH Supabase flows:
-// 1) ?code=...  (PKCE): exchangeCodeForSession
-// 2) #access_token=...&refresh_token=... (implicit): setSession
-//
-// After success, redirects to ?next=... or "/".
+/**
+ * app/auth/callback/page.tsx
+ * Handles both Supabase flows:
+ *   1) ?code=... (PKCE)  -> exchangeCodeForSession
+ *   2) #access_token=...&refresh_token=... (implicit) -> setSession
+ * Redirects to ?next=... if present, else role-aware default: /tenant or /landlord.
+ */
 
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -16,26 +17,57 @@ function parseHashParams(hash: string): URLSearchParams {
   return new URLSearchParams(raw);
 }
 
+async function resolveRoleDefault(): Promise<string> {
+  // Default destination if we can’t read a role
+  let fallback = '/tenant';
+
+  try {
+    const { data: userRes } = await supabaseClient.auth.getUser();
+    const user = userRes?.user;
+    if (!user) return fallback;
+
+    // Try read role from your profile table (public.profile with user_id, role)
+    const { data: profile } = await supabaseClient
+      .from('profile')
+      .select('role')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    const role = profile?.role?.toUpperCase?.();
+    if (role === 'LANDLORD') return '/landlord';
+    if (role === 'TENANT') return '/tenant';
+    // STAFF/ADMIN don’t use this app’s domain; keep them out of here.
+    return fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export default function AuthCallbackPage() {
   const router = useRouter();
   const search = useSearchParams();
-  const [message, setMessage] = useState<string>('Signing you in…');
+  const [message, setMessage] = useState('Signing you in…');
 
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
       try {
-        const next = search.get('next') || '/';
+        const paramNext = search.get('next'); // may be '/', '', or null
         const code = search.get('code');
 
         if (code) {
           const { error } = await supabaseClient.auth.exchangeCodeForSession(code);
           if (error) throw error;
-          if (!cancelled) router.replace(next);
+
+          const dest =
+            paramNext && paramNext !== '/' ? paramNext : await resolveRoleDefault();
+
+          if (!cancelled) router.replace(dest);
           return;
         }
 
+        // Implicit hash tokens
         const hashParams = parseHashParams(window.location.hash);
         const access_token = hashParams.get('access_token');
         const refresh_token = hashParams.get('refresh_token');
@@ -46,11 +78,15 @@ export default function AuthCallbackPage() {
             refresh_token,
           });
           if (error) throw error;
-          if (!cancelled) router.replace(next);
+
+          const dest =
+            paramNext && paramNext !== '/' ? paramNext : await resolveRoleDefault();
+
+          if (!cancelled) router.replace(dest);
           return;
         }
 
-        // Neither token style is present → send back to sign-in
+        // Neither flow present → bounce to sign-in
         if (!cancelled) {
           setMessage('Missing auth token. Redirecting to sign in…');
           router.replace('/sign-in?error=missing_code');
