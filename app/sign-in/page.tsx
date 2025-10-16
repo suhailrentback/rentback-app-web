@@ -1,8 +1,9 @@
 'use client';
 
-// app/sign-in/page.tsx
-// Simple magic-link sign-in that redirects back through /auth/callback
-// with an optional ?next=... destination.
+/**
+ * app/sign-in/page.tsx
+ * Sends magic link that returns to /auth/callback with a sensible default next=/tenant.
+ */
 
 import * as React from 'react';
 import { useSearchParams } from 'next/navigation';
@@ -21,14 +22,16 @@ export default function SignInPage() {
     setError(null);
 
     try {
-      const next = search.get('next') || '/';
+      // Prefer incoming ?next, else default to tenant dashboard
+      const incomingNext = search.get('next');
+      const next = incomingNext && incomingNext !== '/' ? incomingNext : '/tenant';
+
       const base =
         process.env.NEXT_PUBLIC_SITE_URL ??
         (typeof window !== 'undefined' ? window.location.origin : '');
 
-      const emailRedirectTo = `${base}/auth/callback?next=${encodeURIComponent(
-        next
-      )}`;
+      // Must be registered in Supabase Auth redirect URLs: https://www.rentback.app/auth/callback
+      const emailRedirectTo = `${base}/auth/callback?next=${encodeURIComponent(next)}`;
 
       const { error } = await supabaseClient.auth.signInWithOtp({
         email,
@@ -56,9 +59,7 @@ export default function SignInPage() {
         </div>
 
         <h1 className="mt-4 text-xl font-semibold">Sign in</h1>
-        <p className="mt-1 text-sm text-gray-600">
-          We’ll email you a secure magic link.
-        </p>
+        <p className="mt-1 text-sm text-gray-600">We’ll email you a secure magic link.</p>
 
         {sent ? (
           <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
