@@ -1,106 +1,131 @@
 // middleware.ts
-import { NextRequest, NextResponse } from 'next/server';
-import { ROLE_COOKIE, pathAllowedForRole, roleToHome, type Role } from '@/lib/auth/roles';
-import { createServerClient } from '@supabase/ssr';
+import { NextRequest, NextResponse } from "next/server";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const PUBLIC_PATHS = new Set<string>([
+  "/",
+  "/sign-in",
+  "/auth/callback",
+  "/not-permitted",
+  "/api/health",
+  "/api/auth/sync",
+  "/debug/status",
+]);
 
-const PROTECTED_PREFIXES = ['/tenant', '/landlord', '/admin'];
+const startsWithAny = (path: string, prefixes: string[]) =>
+  prefixes.some((p) => path.startsWith(p));
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Only guard protected sections
-  if (!PROTECTED_PREFIXES.some((p) => pathname.startsWith(p))) {
+  // Skip static assets & public pages
+  if (
+    startsWithAny(pathname, [
+      "/_next",
+      "/favicon",
+      "/robots.txt",
+      "/sitemap.xml",
+      "/assets",
+      "/api/health",
+    ]) ||
+    PUBLIC_PATHS.has(pathname)
+  ) {
     return NextResponse.next();
   }
 
-  // 1) Fast path: cookie
-  const cookieRole = (req.cookies.get(ROLE_COOKIE)?.value as Role | undefined) || undefined;
-  if (cookieRole) {
-    if (pathAllowedForRole(pathname, cookieRole)) {
-      return NextResponse.next();
-    }
-    // Role present but wrong area → not permitted
-    const res = NextResponse.redirect(new URL('/not-permitted', req.url));
-    return res;
-  }
-
-  // 2) Slow path: check Supabase once (also refresh cookie)
+  // Prepare a mutable response for cookie writes
   const res = NextResponse.next();
+
+  // Build a Supabase server client wired to middleware cookies
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
   const supabase = createServerClient(url, anon, {
     cookies: {
-      get(name) {
+      get(name: string) {
         return req.cookies.get(name)?.value;
       },
-      set(name, value, options) {
-        res.cookies.set({ name, value, ...(options || {}) });
+      set(name: string, value: string, options?: CookieOptions) {
+        res.cookies.set({ name, value, ...options });
       },
-      remove(name, options) {
-        res.cookies.set({ name, value: '', ...(options || {}), maxAge: 0 });
+      remove(name: string, options?: CookieOptions) {
+        res.cookies.set({ name, value: "", ...options, maxAge: 0 });
       },
     },
     global: { fetch },
   });
 
-  // Make sure we have a session at all
-  const { data: { user } = { user: null } } = await supabase.auth.getUser();
+  // Get current user (if any)
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  // Gate protected sections
+  const isTenantArea = pathname.startsWith("/tenant");
+  const isLandlordArea = pathname.startsWith("/landlord");
+  const isAdminArea = pathname.startsWith("/admin");
+
   if (!user) {
-    const signInUrl = new URL('/sign-in', req.url);
-    signInUrl.searchParams.set('next', pathname);
-    return NextResponse.redirect(signInUrl);
-  }
-
-  // Fetch role from profiles; avoid chaining .catch on the builder
-  let role: Role | null = null;
-  try {
-    const { data } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single();
-    role = (data?.role as Role | null) ?? null;
-  } catch {
-    role = null;
-  }
-
-  // If still missing, default to tenant and persist (first-sign-in safety)
-  if (!role) {
-    role = (user.email?.toLowerCase().endsWith('@rentback.app') ? 'staff' : 'tenant') as Role;
-    try {
-      await supabase.from('profiles').upsert(
-        { id: user.id, email: user.email, role },
-        { onConflict: 'id' }
-      );
-    } catch {
-      // ignore
+    // Not signed in but trying to access a protected area → go to sign-in
+    if (isTenantArea || isLandlordArea || isAdminArea) {
+      const url = req.nextUrl.clone();
+      url.pathname = "/sign-in";
+      url.searchParams.set("next", pathname);
+      return NextResponse.redirect(url);
     }
-  }
-
-  // Set/refresh short-lived role cookie
-  res.cookies.set(ROLE_COOKIE, role, {
-    path: '/',
-    httpOnly: true,
-    secure: true,
-    sameSite: 'lax',
-    maxAge: 60 * 20,
-  });
-
-  // Final access check
-  if (pathAllowedForRole(pathname, role)) {
     return res;
   }
 
-  // Wrong area → send them to their home
-  const redirectUrl = new URL(roleToHome(role), req.url);
-  return NextResponse.redirect(redirectUrl);
+  // Read role safely (no .catch on the builder)
+  const { data: prof } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id) // If your PK is user_id, change the column
+    .maybeSingle();
+
+  let role: string | null = prof?.role ?? null;
+
+  // If missing, create default tenant record
+  if (!role) {
+    const { data: up } = await supabase
+      .from("profiles")
+      .upsert(
+        {
+          id: user.id, // or user_id: user.id
+          email: user.email,
+          full_name: user.email ?? "",
+          role: "tenant",
+        },
+        { onConflict: "id" }
+      )
+      .select("role")
+      .single();
+
+    role = up?.role ?? null;
+  }
+
+  // Simple role-based gates
+  if (isTenantArea && role !== "tenant") {
+    const url = req.nextUrl.clone();
+    url.pathname = "/not-permitted";
+    return NextResponse.redirect(url);
+  }
+
+  if (isLandlordArea && role !== "landlord") {
+    const url = req.nextUrl.clone();
+    url.pathname = "/not-permitted";
+    return NextResponse.redirect(url);
+  }
+
+  if (isAdminArea && role !== "staff" && role !== "admin") {
+    const url = req.nextUrl.clone();
+    url.pathname = "/not-permitted";
+    return NextResponse.redirect(url);
+  }
+
+  return res;
 }
 
+// Run on everything except static assets
 export const config = {
-  matcher: [
-    '/tenant/:path*',
-    '/landlord/:path*',
-    '/admin/:path*',
-  ],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)"],
 };
