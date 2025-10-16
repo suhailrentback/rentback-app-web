@@ -6,14 +6,16 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 /**
  * Server-side Supabase using Next.js cookies.
- * Works in Server Components, layouts, and Route Handlers.
+ * This helper is synchronous.
  */
-export async function createServerSupabase(): Promise<SupabaseClient> {
+export function createServerSupabase(): SupabaseClient {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
   const cookieStore = cookies();
 
-  if (!url || !anon) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  if (!url || !anon) {
+    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  }
 
   return createServerClient(url, anon, {
     cookies: {
@@ -30,8 +32,5 @@ export async function createServerSupabase(): Promise<SupabaseClient> {
   });
 }
 
-/**
- * Alias for older imports that expect `createRouteSupabase`.
- * (Same behavior as createServerSupabase.)
- */
+/** Backwards-compatible alias for route handlers */
 export const createRouteSupabase = createServerSupabase;
