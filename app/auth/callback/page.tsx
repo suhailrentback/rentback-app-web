@@ -1,4 +1,3 @@
-// app/auth/callback/page.tsx
 'use client';
 
 import { useEffect } from 'react';
@@ -23,14 +22,13 @@ export default function AuthCallbackPage() {
 
       try {
         if (access_token && refresh_token) {
-          // Magic link with tokens in hash
           await supabase.auth.setSession({ access_token, refresh_token });
         } else if (code) {
-          // OAuth/code flow fallback
           await supabase.auth.exchangeCodeForSession(code);
         }
-      } catch {
-        // no-op; we'll land on sign-in if session didn’t stick
+
+        // 🔄 Ensure profile exists with a default role = 'tenant'
+        await fetch('/api/auth/sync', { method: 'POST', cache: 'no-store' }).catch(() => {});
       } finally {
         router.replace(next);
       }
