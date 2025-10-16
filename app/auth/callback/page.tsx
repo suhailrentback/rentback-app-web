@@ -1,144 +1,86 @@
-'use client';
+"use client";
 
-/**
- * app/auth/callback/page.tsx
- * Handles both Supabase flows (PKCE code or hash tokens),
- * then syncs tokens to a secure server cookie via /api/auth/sync.
- * Finally, redirect to ?next=... or a role-aware default.
- */
+import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { createBrowserClient } from "@supabase/ssr";
 
-import { useEffect, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { supabaseClient } from '@/lib/supabase/client';
+const supabase = createBrowserClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
-function parseHashParams(hash: string): URLSearchParams {
-  const raw = hash?.startsWith('#') ? hash.slice(1) : hash || '';
-  return new URLSearchParams(raw);
-}
-
-async function resolveRoleDefault(): Promise<string> {
-  // Default destination if role missing
-  let fallback = '/tenant';
-  try {
-    const { data: userRes } = await supabaseClient.auth.getUser();
-    const user = userRes?.user;
-    if (!user) return fallback;
-
-    const { data: profile } = await supabaseClient
-      .from('profile')
-      .select('role')
-      .eq('user_id', user.id)
-      .maybeSingle();
-
-    const role = profile?.role?.toUpperCase?.();
-    if (role === 'LANDLORD') return '/landlord';
-    if (role === 'TENANT') return '/tenant';
-    return fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-async function syncServerCookieFromCurrentSession() {
-  const { data } = await supabaseClient.auth.getSession();
-  const session = data?.session;
-  if (!session?.access_token || !session?.refresh_token) return;
-
-  await fetch('/api/auth/sync', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      access_token: session.access_token,
-      refresh_token: session.refresh_token,
-    }),
-    // no-cache to avoid any proxy weirdness
-    cache: 'no-store',
-  }).catch(() => {});
-}
-
-async function syncServerCookieFromTokens(access_token: string, refresh_token: string) {
-  await fetch('/api/auth/sync', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ access_token, refresh_token }),
-    cache: 'no-store',
-  }).catch(() => {});
+function parseHash(hash: string) {
+  const raw = hash?.startsWith("#") ? hash.slice(1) : hash || "";
+  const p = new URLSearchParams(raw);
+  return {
+    access_token: p.get("access_token") || undefined,
+    refresh_token: p.get("refresh_token") || undefined,
+    error: p.get("error") || undefined,
+  };
 }
 
 export default function AuthCallbackPage() {
   const router = useRouter();
-  const search = useSearchParams();
-  const [message, setMessage] = useState('Signing you in…');
+  const sp = useSearchParams();
+  const next = sp.get("next") || "/tenant";
+  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-
     (async () => {
+      const { access_token, refresh_token, error } = parseHash(window.location.hash);
+
+      // Handle OAuth "code" too, just in case
+      const code = sp.get("code");
+
       try {
-        const paramNext = search.get('next');
-        const code = search.get('code');
-
-        if (code) {
-          // PKCE: finish exchange in the browser
-          const { error } = await supabaseClient.auth.exchangeCodeForSession(code);
-          if (error) throw error;
-
-          // Sync to server cookie
-          await syncServerCookieFromCurrentSession();
-
-          const dest =
-            paramNext && paramNext !== '/' ? paramNext : await resolveRoleDefault();
-          if (!cancelled) router.replace(dest);
-          return;
-        }
-
-        // Hash tokens flow
-        const hashParams = parseHashParams(window.location.hash);
-        const access_token = hashParams.get('access_token');
-        const refresh_token = hashParams.get('refresh_token');
+        if (error) throw new Error(error);
 
         if (access_token && refresh_token) {
-          // Set in browser
-          const { error } = await supabaseClient.auth.setSession({
+          // 1) Create client session
+          const { data, error: setErr } = await supabase.auth.setSession({
             access_token,
             refresh_token,
           });
-          if (error) throw error;
+          if (setErr) throw setErr;
 
-          // Sync to server cookie
-          await syncServerCookieFromTokens(access_token, refresh_token);
+          // 2) Sync to server cookies for SSR
+          await fetch("/api/auth/sync", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ event: "SIGNED_IN", session: data.session }),
+            cache: "no-store",
+          });
+        } else if (code) {
+          // Fallback for OAuth code flow
+          const { error: exchErr } = await supabase.auth.exchangeCodeForSession(code);
+          if (exchErr) throw exchErr;
 
-          const dest =
-            paramNext && paramNext !== '/' ? paramNext : await resolveRoleDefault();
-          if (!cancelled) router.replace(dest);
-          return;
+          // Sync after exchange
+          const { data } = await supabase.auth.getSession();
+          await fetch("/api/auth/sync", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ event: "SIGNED_IN", session: data.session }),
+            cache: "no-store",
+          });
+        } else {
+          throw new Error("Missing tokens");
         }
 
-        // Neither flow present → back to sign-in
-        if (!cancelled) {
-          setMessage('Missing auth token. Redirecting to sign in…');
-          router.replace('/sign-in?error=missing_code');
-        }
-      } catch (err: any) {
-        console.error('Auth callback error:', err);
-        if (!cancelled) {
-          setMessage(err?.message || 'Sign-in failed. Please try again.');
-          router.replace('/sign-in?error=callback_failed');
-        }
+        // 3) Clean redirect
+        router.replace(next);
+      } catch (e: any) {
+        setErr(e?.message ?? "Sign-in failed");
+        router.replace(`/sign-in?next=${encodeURIComponent(next)}`);
       }
     })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [router, search]);
+  }, [router, sp, next]);
 
   return (
     <div className="grid min-h-[60vh] place-items-center p-6">
-      <div className="w-full max-w-sm rounded-2xl border p-6 text-center shadow-sm">
-        <div className="mx-auto h-10 w-10 animate-pulse rounded-full bg-emerald-600/15" />
-        <h1 className="mt-3 text-lg font-semibold">Signing you in</h1>
-        <p className="mt-1 text-sm text-gray-600">{message}</p>
+      <div className="w-full max-w-sm rounded-xl border p-6 shadow-sm">
+        <div className="text-sm font-medium">Signing you in…</div>
+        {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
       </div>
     </div>
   );
