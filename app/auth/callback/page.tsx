@@ -22,8 +22,8 @@ export default function AuthCallbackPage() {
       fetch("/api/auth/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ access_token, refresh_token }),
         credentials: "include",
+        body: JSON.stringify({ access_token, refresh_token }),
       })
         .then(() => router.replace(next))
         .catch(() => router.replace("/sign-in?error=sync_failed"));
@@ -34,9 +34,7 @@ export default function AuthCallbackPage() {
 
   return (
     <div className="grid min-h-[60vh] place-items-center">
-      <div className="text-center">
-        <div className="text-sm text-gray-500">Signing you in…</div>
-      </div>
+      <div className="text-center text-sm text-gray-500">Signing you in…</div>
     </div>
   );
 }
