@@ -1,54 +1,48 @@
 // app/api/auth/sync/route.ts
-import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { createRouteSupabase } from "@/lib/supabase/server";
-import { getSupabaseAdmin } from "@/lib/supabase/server";
+import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
+import { createRouteSupabase } from '@/lib/supabase/server';
 
-export const runtime = "nodejs";
+export const runtime = 'nodejs'; // SSR libs expect Node here
 
+/** Ensures profile row & role value exist; sets rb_role cookie; returns { role } */
 export async function GET() {
-  try {
-    const supabase = createRouteSupabase();
-    const { data: { user }, error } = await supabase.auth.getUser();
-    if (error || !user) {
-      // not signed in
-      return NextResponse.json({ role: null }, { status: 401 });
-    }
+  const cookieStore = cookies();
+  const supabase = createRouteSupabase();
 
-    // Ensure a profile row exists (admin bypasses RLS)
-    const admin = getSupabaseAdmin();
-    // Default role = tenant if row doesn’t exist
-    const upsertPayload = {
-      id: user.id,
-      email: user.email ?? "",
-      role: "tenant",
-    };
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) return NextResponse.json({ role: null }, { status: 401 });
 
-    // Upsert on id
-    await admin
-      .from("profiles")
-      .upsert(upsertPayload, { onConflict: "id" });
+  // Read role if present
+  let role = cookieStore.get('rb_role')?.value ?? null;
 
-    // Read back the role (still via admin to avoid RLS surprises)
-    const { data: profile } = await admin
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
+  // Ensure a profile exists & has a role; default => tenant
+  if (!role) {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', session.user.id)
       .single();
 
-    const role = profile?.role ?? "tenant";
+    role = profile?.role ?? 'tenant';
 
-    // Set a non-HTTP-only role cookie for middleware/page guards
-    const res = NextResponse.json({ role });
-    res.cookies.set("rb_role", role, {
-      path: "/",
-      sameSite: "lax",
-      httpOnly: false,
-      maxAge: 60 * 60 * 24 * 30,
-    });
-
-    return res;
-  } catch (e) {
-    return NextResponse.json({ error: "sync_failed" }, { status: 500 });
+    // Attempt to upsert (ok if RLS allows insert-on-missing for owner)
+    await supabase
+      .from('profiles')
+      .upsert({ id: session.user.id, role })
+      .select('role')
+      .single();
   }
+
+  const res = NextResponse.json({ role });
+  res.cookies.set({
+    name: 'rb_role',
+    value: role,
+    path: '/',
+    sameSite: 'lax',
+    httpOnly: true,
+    secure: true,
+    maxAge: 60 * 60 * 24 * 30,
+  });
+  return res;
 }
