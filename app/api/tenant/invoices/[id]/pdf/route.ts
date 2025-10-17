@@ -89,8 +89,13 @@ export async function GET(
   doc.end();
   const pdfBuffer = await finalize;
 
-  // ✅ Wrap Buffer in a Blob so BodyInit type matches
-  const blob = new Blob([pdfBuffer], { type: "application/pdf" });
+  // ✅ Convert Buffer → Uint8Array (BlobPart friendly)
+  const uint8 = new Uint8Array(
+    pdfBuffer.buffer,
+    pdfBuffer.byteOffset,
+    pdfBuffer.byteLength
+  );
+  const blob = new Blob([uint8], { type: "application/pdf" });
 
   return new NextResponse(blob, {
     headers: {
