@@ -6,7 +6,18 @@ import { z } from "zod";
 
 export const runtime = "nodejs";
 
-// Validate invoice shape and coerce numeric strings → numbers
+/** Shape as it comes from DB (loose – allows string or number for total). */
+type DbInvoiceRow = {
+  id: string;
+  number: string | null;
+  status: string | null;
+  issued_at: string | null;
+  due_date: string | null;
+  total_amount: number | string | null;
+  currency: string | null;
+};
+
+/** Runtime schema – coerces numeric strings to numbers safely. */
 const Invoice = z.object({
   id: z.string(),
   number: z.string().nullable().optional(),
@@ -15,7 +26,7 @@ const Invoice = z.object({
   due_date: z.string().nullable().optional(),
   total_amount: z
     .preprocess((val) => {
-      if (val == null) return val; // keep null/undefined
+      if (val == null) return null;
       if (typeof val === "number") return val;
       if (typeof val === "string") {
         const n = Number(val.trim());
@@ -27,7 +38,6 @@ const Invoice = z.object({
     .optional(),
   currency: z.string().nullable().optional(),
 });
-
 type InvoiceRow = z.infer<typeof Invoice>;
 
 export async function GET(
@@ -37,8 +47,9 @@ export async function GET(
   const supabase = createRouteSupabase();
   const { id } = params;
 
+  // ✅ Strongly type the query result so `data` is never a GenericStringError
   const { data, error } = await supabase
-    .from("invoices")
+    .from<DbInvoiceRow>("invoices")
     .select("id, number, status, issued_at, due_date, total_amount, currency")
     .eq("id", id)
     .maybeSingle();
@@ -50,16 +61,15 @@ export async function GET(
     );
   }
 
-  // Runtime-validate and narrow the type
-  let invoice: InvoiceRow;
-  try {
-    invoice = Invoice.parse(data);
-  } catch (_e) {
+  // ✅ Narrow with safeParse so `invoice` is definitely InvoiceRow
+  const parsed = Invoice.safeParse(data);
+  if (!parsed.success) {
     return NextResponse.json(
       { error: "Invoice shape unexpected" },
       { status: 500 }
     );
   }
+  const invoice: InvoiceRow = parsed.data;
 
   // Only allow receipts for PAID invoices
   const isPaid = String(invoice.status ?? "").toLowerCase() === "paid";
