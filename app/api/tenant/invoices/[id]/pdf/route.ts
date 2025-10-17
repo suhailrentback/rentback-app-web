@@ -49,13 +49,13 @@ export async function GET(
     );
   }
 
-  const invoice = data; // properly narrowed to InvoiceRow
+  const invoice = data;
 
-  // Build PDF in-memory
+  // Build PDF into a Buffer
   const doc = new PDFDocument({ size: "A4", margin: 48 });
   const chunks: Buffer[] = [];
   doc.on("data", (c) => chunks.push(c));
-  const done = new Promise<Buffer>((resolve) => {
+  const finalize = new Promise<Buffer>((resolve) => {
     doc.on("end", () => resolve(Buffer.concat(chunks)));
   });
 
@@ -87,9 +87,12 @@ export async function GET(
   doc.fontSize(12).fillColor("#111827").text(`Amount: ${amount} ${currency}`);
 
   doc.end();
-  const pdf = await done;
+  const pdfBuffer = await finalize;
 
-  return new NextResponse(pdf, {
+  // ✅ Wrap Buffer in a Blob so BodyInit type matches
+  const blob = new Blob([pdfBuffer], { type: "application/pdf" });
+
+  return new NextResponse(blob, {
     headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": `inline; filename="invoice-${
