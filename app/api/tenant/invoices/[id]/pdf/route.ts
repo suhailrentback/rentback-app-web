@@ -1,3 +1,4 @@
+// app/api/tenant/invoices/[id]/receipt/route.ts
 import { NextResponse } from "next/server";
 import PDFDocument from "pdfkit";
 import { createRouteSupabase } from "@/lib/supabase/server";
@@ -5,15 +6,28 @@ import { z } from "zod";
 
 export const runtime = "nodejs";
 
+// Validate invoice shape and coerce numeric strings → numbers
 const Invoice = z.object({
   id: z.string(),
   number: z.string().nullable().optional(),
   status: z.string().nullable().optional(),
   issued_at: z.string().nullable().optional(),
   due_date: z.string().nullable().optional(),
-  total_amount: z.number().nullable().optional(),
+  total_amount: z
+    .preprocess((val) => {
+      if (val == null) return val; // keep null/undefined
+      if (typeof val === "number") return val;
+      if (typeof val === "string") {
+        const n = Number(val.trim());
+        return Number.isFinite(n) ? n : NaN;
+      }
+      return NaN;
+    }, z.number())
+    .nullable()
+    .optional(),
   currency: z.string().nullable().optional(),
 });
+
 type InvoiceRow = z.infer<typeof Invoice>;
 
 export async function GET(
@@ -36,11 +50,11 @@ export async function GET(
     );
   }
 
-  // ✅ runtime-validate and narrow the type
+  // Runtime-validate and narrow the type
   let invoice: InvoiceRow;
   try {
     invoice = Invoice.parse(data);
-  } catch {
+  } catch (_e) {
     return NextResponse.json(
       { error: "Invoice shape unexpected" },
       { status: 500 }
@@ -77,14 +91,13 @@ export async function GET(
   doc.text(
     `Due: ${invoice.due_date ? new Date(invoice.due_date).toDateString() : "—"}`
   );
-  const amt =
-    typeof invoice.total_amount === "number" ? invoice.total_amount : 0;
+  const amt = typeof invoice.total_amount === "number" ? invoice.total_amount : 0;
   doc.text(`Amount Received: ${amt} ${invoice.currency ?? "PKR"}`);
   doc.end();
 
   const pdfBuffer = await done;
 
-  // Return as ArrayBuffer so NextResponse’s BodyInit type is satisfied
+  // Return as ArrayBuffer so NextResponse BodyInit is satisfied
   const arrayBuffer = pdfBuffer.buffer.slice(
     pdfBuffer.byteOffset,
     pdfBuffer.byteOffset + pdfBuffer.byteLength
