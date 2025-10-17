@@ -1,35 +1,56 @@
 // middleware.ts
-import { NextResponse, NextRequest } from 'next/server';
+import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 
-const MATCH = ['/tenant', '/landlord', '/admin'];
+const DASHES = [
+  ["/tenant", "tenant"],
+  ["/landlord", "landlord"],
+  ["/admin", "staff"],
+] as const;
 
 export function middleware(req: NextRequest) {
-  const { pathname } = req.nextUrl;
-  const needsGuard = MATCH.some((m) => pathname === m || pathname.startsWith(m + '/'));
-  if (!needsGuard) return NextResponse.next();
+  const url = new URL(req.url);
+  const { pathname } = url;
+  const role = req.cookies.get("rb_role")?.value;
 
-  const role = req.cookies.get('rb_role')?.value as 'tenant' | 'landlord' | 'staff' | undefined;
-  if (!role) {
-    const url = req.nextUrl.clone();
-    url.pathname = '/sign-in';
-    url.searchParams.set('next', pathname);
-    return NextResponse.redirect(url);
+  // Protect dashboards by cookie role
+  for (const [prefix, needed] of DASHES) {
+    if (pathname.startsWith(prefix)) {
+      if (!role) {
+        url.pathname = "/sign-in";
+        url.searchParams.set("next", pathname);
+        return NextResponse.redirect(url);
+      }
+      if (role !== needed) {
+        url.pathname = "/not-permitted";
+        url.search = "";
+        return NextResponse.redirect(url);
+      }
+    }
   }
 
-  // Role-based gates
-  if (pathname.startsWith('/tenant')) {
-    if (role === 'tenant' || role === 'staff') return NextResponse.next();
-  } else if (pathname.startsWith('/landlord')) {
-    if (role === 'landlord' || role === 'staff') return NextResponse.next();
-  } else if (pathname.startsWith('/admin')) {
-    if (role === 'staff') return NextResponse.next();
+  // If you land on not-permitted but actually have a role, push to your dashboard
+  if (pathname === "/not-permitted") {
+    if (role === "tenant") {
+      url.pathname = "/tenant";
+      url.search = "";
+      return NextResponse.redirect(url);
+    }
+    if (role === "landlord") {
+      url.pathname = "/landlord";
+      url.search = "";
+      return NextResponse.redirect(url);
+    }
+    if (role === "staff") {
+      url.pathname = "/admin";
+      url.search = "";
+      return NextResponse.redirect(url);
+    }
   }
 
-  const url = req.nextUrl.clone();
-  url.pathname = '/not-permitted';
-  return NextResponse.rewrite(url);
+  return NextResponse.next();
 }
 
 export const config = {
-  matcher: ['/tenant/:path*', '/landlord/:path*', '/admin/:path*'],
+  matcher: ["/tenant/:path*", "/landlord/:path*", "/admin/:path*", "/not-permitted"],
 };
