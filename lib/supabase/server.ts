@@ -9,14 +9,12 @@ export function getSupabaseServer(): SupabaseClient {
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
   const cookieStore = cookies();
 
-  // Use the SSR helper with a Next.js cookies adapter
   const client = createServerClient(url, anon, {
     cookies: {
       get(name: string) {
         return cookieStore.get(name)?.value;
       },
       set(name: string, value: string, options?: CookieOptions) {
-        // Next 14 supports this overload: (name, value, options)
         cookieStore.set(name, value, options);
       },
       remove(name: string) {
@@ -25,6 +23,10 @@ export function getSupabaseServer(): SupabaseClient {
     },
   });
 
-  // Loosen TS generics to avoid schema type mismatches
+  // Loosen generics so TS doesn't complain about schema typing
   return client as unknown as SupabaseClient;
 }
+
+/** Back-compat shims so existing imports keep working */
+export const createServerSupabase = getSupabaseServer;
+export const createRouteSupabase = getSupabaseServer;
