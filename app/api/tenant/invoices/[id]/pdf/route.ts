@@ -1,21 +1,10 @@
-// app/api/tenant/invoices/[id]/receipt/route.ts
+// app/api/tenant/invoices/[id]/pdf/route.ts
 import { NextResponse } from "next/server";
 import PDFDocument from "pdfkit";
 import { createRouteSupabase } from "@/lib/supabase/server";
 import { z } from "zod";
 
 export const runtime = "nodejs";
-
-/** Shape as it comes from DB (loose – allows string or number for total). */
-type DbInvoiceRow = {
-  id: string;
-  number: string | null;
-  status: string | null;
-  issued_at: string | null;
-  due_date: string | null;
-  total_amount: number | string | null;
-  currency: string | null;
-};
 
 /** Runtime schema – coerces numeric strings to numbers safely. */
 const Invoice = z.object({
@@ -47,9 +36,9 @@ export async function GET(
   const supabase = createRouteSupabase();
   const { id } = params;
 
-  // ✅ Strongly type the query result so `data` is never a GenericStringError
+  // ✅ No generics on .from(); validate the shape with Zod instead
   const { data, error } = await supabase
-    .from<DbInvoiceRow>("invoices")
+    .from("invoices")
     .select("id, number, status, issued_at, due_date, total_amount, currency")
     .eq("id", id)
     .maybeSingle();
@@ -61,7 +50,6 @@ export async function GET(
     );
   }
 
-  // ✅ Narrow with safeParse so `invoice` is definitely InvoiceRow
   const parsed = Invoice.safeParse(data);
   if (!parsed.success) {
     return NextResponse.json(
@@ -71,16 +59,7 @@ export async function GET(
   }
   const invoice: InvoiceRow = parsed.data;
 
-  // Only allow receipts for PAID invoices
-  const isPaid = String(invoice.status ?? "").toLowerCase() === "paid";
-  if (!isPaid) {
-    return NextResponse.json(
-      { error: "Receipt is only available for PAID invoices" },
-      { status: 409 }
-    );
-  }
-
-  // ---- Build a simple receipt PDF (in-memory) ----
+  // ---- Build a simple invoice PDF (in-memory) ----
   const doc = new PDFDocument({ size: "A4", margin: 48 });
   const chunks: Buffer[] = [];
   doc.on("data", (c) => chunks.push(c));
@@ -88,7 +67,7 @@ export async function GET(
     doc.on("end", () => resolve(Buffer.concat(chunks)))
   );
 
-  doc.fontSize(16).text("Payment Receipt");
+  doc.fontSize(18).text("Invoice", { align: "left" });
   doc.moveDown(0.5);
   doc.fontSize(10).fillColor("#111827");
   doc.text(`Invoice #${invoice.number ?? invoice.id}`);
@@ -102,12 +81,12 @@ export async function GET(
     `Due: ${invoice.due_date ? new Date(invoice.due_date).toDateString() : "—"}`
   );
   const amt = typeof invoice.total_amount === "number" ? invoice.total_amount : 0;
-  doc.text(`Amount Received: ${amt} ${invoice.currency ?? "PKR"}`);
+  doc.text(`Total: ${amt} ${invoice.currency ?? "PKR"}`);
   doc.end();
 
   const pdfBuffer = await done;
 
-  // Return as ArrayBuffer so NextResponse BodyInit is satisfied
+  // Return as ArrayBuffer so NextResponse BodyInit is satisfied (Node runtime)
   const arrayBuffer = pdfBuffer.buffer.slice(
     pdfBuffer.byteOffset,
     pdfBuffer.byteOffset + pdfBuffer.byteLength
@@ -116,7 +95,7 @@ export async function GET(
   return new NextResponse(arrayBuffer, {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="receipt-${
+      "Content-Disposition": `inline; filename="invoice-${
         invoice.number ?? invoice.id
       }.pdf"`,
       "Cache-Control": "no-store",
