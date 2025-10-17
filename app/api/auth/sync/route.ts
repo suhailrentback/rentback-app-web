@@ -1,68 +1,54 @@
 // app/api/auth/sync/route.ts
-import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createServerSupabase } from '@/lib/supabase/server';
+import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { createRouteSupabase } from "@/lib/supabase/server";
+import { getSupabaseAdmin } from "@/lib/supabase/server";
 
-export const runtime = 'nodejs';
-
-type Body = {
-  access_token?: string;
-  refresh_token?: string;
-};
-
-async function upsertProfileRole(supabase: ReturnType<typeof createServerSupabase>) {
-  const { data: userData } = await supabase.auth.getUser();
-  const user = userData?.user ?? null;
-  if (!user) return null;
-
-  // Ensure profile row exists with a role
-  const { data: prof } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .single();
-
-  let role = prof?.role ?? 'tenant';
-  if (!prof) {
-    const { data: inserted } = await supabase
-      .from('profiles')
-      .insert({ id: user.id, email: user.email, role })
-      .select('role')
-      .single();
-    role = inserted?.role ?? role;
-  }
-
-  // Mirror role into a simple cookie the middleware can read
-  cookies().set({
-    name: 'rb_role',
-    value: String(role),
-    httpOnly: false,
-    sameSite: 'lax',
-    path: '/',
-  });
-
-  return role as 'tenant' | 'landlord' | 'staff';
-}
-
-export async function POST(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as Body;
-
-  const supabase = createServerSupabase();
-
-  // If tokens provided (email+password flow), set session cookies server-side
-  if (body.access_token && body.refresh_token) {
-    await supabase.auth.setSession({
-      access_token: body.access_token,
-      refresh_token: body.refresh_token,
-    });
-  }
-
-  const role = await upsertProfileRole(supabase);
-  return NextResponse.json({ role });
-}
+export const runtime = "nodejs";
 
 export async function GET() {
-  const supabase = createServerSupabase();
-  const role = await upsertProfileRole(supabase);
-  return NextResponse.json({ role });
+  try {
+    const supabase = createRouteSupabase();
+    const { data: { user }, error } = await supabase.auth.getUser();
+    if (error || !user) {
+      // not signed in
+      return NextResponse.json({ role: null }, { status: 401 });
+    }
+
+    // Ensure a profile row exists (admin bypasses RLS)
+    const admin = getSupabaseAdmin();
+    // Default role = tenant if row doesn’t exist
+    const upsertPayload = {
+      id: user.id,
+      email: user.email ?? "",
+      role: "tenant",
+    };
+
+    // Upsert on id
+    await admin
+      .from("profiles")
+      .upsert(upsertPayload, { onConflict: "id" });
+
+    // Read back the role (still via admin to avoid RLS surprises)
+    const { data: profile } = await admin
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .single();
+
+    const role = profile?.role ?? "tenant";
+
+    // Set a non-HTTP-only role cookie for middleware/page guards
+    const res = NextResponse.json({ role });
+    res.cookies.set("rb_role", role, {
+      path: "/",
+      sameSite: "lax",
+      httpOnly: false,
+      maxAge: 60 * 60 * 24 * 30,
+    });
+
+    return res;
+  } catch (e) {
+    return NextResponse.json({ error: "sync_failed" }, { status: 500 });
+  }
 }
