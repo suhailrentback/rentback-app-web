@@ -1,25 +1,33 @@
+// middleware.ts
 import { NextResponse, NextRequest } from 'next/server';
 
-const PROTECTED_PREFIXES = ['/tenant', '/landlord', '/admin'];
+const MATCH = ['/tenant', '/landlord', '/admin'];
 
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
+  const needsGuard = MATCH.some((m) => pathname === m || pathname.startsWith(m + '/'));
+  if (!needsGuard) return NextResponse.next();
 
-  // Only guard protected sections for session presence.
-  if (!PROTECTED_PREFIXES.some(p => pathname.startsWith(p))) {
-    return NextResponse.next();
-  }
-
-  // Supabase sets sb-access-token cookie when authenticated
-  const hasSession = Boolean(req.cookies.get('sb-access-token')?.value);
-  if (!hasSession) {
+  const role = req.cookies.get('rb_role')?.value as 'tenant' | 'landlord' | 'staff' | undefined;
+  if (!role) {
     const url = req.nextUrl.clone();
     url.pathname = '/sign-in';
     url.searchParams.set('next', pathname);
     return NextResponse.redirect(url);
   }
 
-  return NextResponse.next();
+  // Role-based gates
+  if (pathname.startsWith('/tenant')) {
+    if (role === 'tenant' || role === 'staff') return NextResponse.next();
+  } else if (pathname.startsWith('/landlord')) {
+    if (role === 'landlord' || role === 'staff') return NextResponse.next();
+  } else if (pathname.startsWith('/admin')) {
+    if (role === 'staff') return NextResponse.next();
+  }
+
+  const url = req.nextUrl.clone();
+  url.pathname = '/not-permitted';
+  return NextResponse.rewrite(url);
 }
 
 export const config = {
