@@ -1,147 +1,113 @@
 // app/tenant/invoices/page.tsx
-import { createServerSupabase } from "@/lib/supabase/server";
 import Link from "next/link";
+import { createServerSupabase } from "@/lib/supabase/server";
 
-type Invoice = {
-  id: string;
-  ref: string;
-  description: string | null;
-  amount_cents: number;
-  currency: string;
-  status: "draft" | "issued" | "paid" | "overdue";
-  due_date: string | null;     // ISO (date) from Postgres
-  issued_at: string | null;    // ISO (timestamp) from Postgres
-  created_at: string;
-};
-
-function formatAmount(amount_cents: number, currency: string) {
-  const amount = (amount_cents ?? 0) / 100;
+function formatMoney(raw: any) {
+  const currency = (raw?.currency || "PKR") as string;
+  const amount =
+    typeof raw?.amount_cents === "number"
+      ? raw.amount_cents / 100
+      : typeof raw?.amount === "number"
+      ? raw.amount
+      : 0;
   try {
     return new Intl.NumberFormat("en-PK", {
       style: "currency",
-      currency: currency || "PKR",
+      currency,
       maximumFractionDigits: 0,
     }).format(amount);
   } catch {
-    return `${amount.toFixed(0)} ${currency || "PKR"}`;
+    return `${currency} ${Math.round(amount).toLocaleString()}`;
   }
 }
 
-function StatusPill({ status }: { status: Invoice["status"] }) {
-  const map: Record<Invoice["status"], { bg: string; text: string; label: string }> = {
-    draft:   { bg: "bg-gray-100",   text: "text-gray-700",   label: "DRAFT" },
-    issued:  { bg: "bg-amber-100",  text: "text-amber-800",  label: "ISSUED" },
-    paid:    { bg: "bg-emerald-100",text: "text-emerald-800",label: "PAID" },
-    overdue: { bg: "bg-rose-100",   text: "text-rose-800",   label: "OVERDUE" },
-  };
-  const c = map[status] ?? map.draft;
-  return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${c.bg} ${c.text}`}>
-      {c.label}
-    </span>
-  );
+function formatDate(value?: string | null) {
+  if (!value) return "—";
+  const d = new Date(value);
+  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-export const dynamic = "force-dynamic";
+function StatusBadge({ status }: { status?: string | null }) {
+  const s = (status || "issued").toLowerCase();
+  const base = "rounded-full px-2.5 py-1 text-xs font-medium ring-1";
+  if (s === "paid") return <span className={`${base} bg-emerald-50 text-emerald-700 ring-emerald-200`}>PAID</span>;
+  if (s === "overdue") return <span className={`${base} bg-red-50 text-red-700 ring-red-200`}>OVERDUE</span>;
+  return <span className={`${base} bg-amber-50 text-amber-800 ring-amber-200`}>{s.toUpperCase()}</span>;
+}
 
 export default async function TenantInvoicesPage() {
   const supabase = createServerSupabase();
 
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
-    // Fallback: if somehow unauth, push to sign-in
-    return (
-      <div className="mx-auto max-w-4xl px-6 py-10">
-        <h1 className="text-2xl font-semibold">Invoices</h1>
-        <p className="mt-4 text-gray-600">You need to sign in to view invoices.</p>
-        <Link className="mt-6 inline-flex rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white" href="/sign-in">
-          Sign in
-        </Link>
-      </div>
-    );
-  }
-
-  const { data: invoices, error } = await supabase
+  // RLS should scope rows to the signed-in tenant
+  const { data: invoices = [], error } = await supabase
     .from("invoices")
-    .select("id, ref, description, amount_cents, currency, status, due_date, issued_at, created_at")
-    .eq("tenant_id", user.id)
-    .order("due_date", { ascending: true, nullsFirst: true })
-    .limit(100);
+    .select("*")
+    .order("created_at", { ascending: false });
 
-  if (error) {
-    return (
-      <div className="mx-auto max-w-4xl px-6 py-10">
-        <h1 className="text-2xl font-semibold">Invoices</h1>
-        <p className="mt-4 rounded-md bg-rose-50 p-3 text-sm text-rose-700">
-          Couldn’t load invoices: {error.message}
-        </p>
-      </div>
-    );
-  }
-
-  const hasRows = (invoices?.length ?? 0) > 0;
+  // Soft-fail: show empty state on error to avoid leaking details
+  const rows = error ? [] : invoices;
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-8">
-      <div className="flex items-end justify-between gap-3">
+    <div className="mx-auto max-w-5xl px-6 py-10">
+      <div className="flex items-center justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700/90">Tenant</p>
-          <h1 className="mt-1 text-3xl font-bold tracking-tight">Invoices</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Invoices</h1>
           <p className="mt-1 text-sm text-gray-600">
             Transparent amounts, clear status, quick receipts (when paid).
           </p>
         </div>
         <Link
           href="/tenant"
-          className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-900 hover:bg-gray-50"
+          className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-900 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-emerald-600"
         >
           Back to dashboard
         </Link>
       </div>
 
-      {!hasRows ? (
+      {rows.length === 0 ? (
         <div className="mt-8 rounded-2xl border p-8 text-center">
-          <div className="mx-auto mb-3 h-10 w-10 rounded-xl bg-emerald-50"></div>
           <h2 className="text-lg font-semibold">No invoices yet</h2>
-          <p className="mt-1 text-sm text-gray-600">
+          <p className="mt-2 text-sm text-gray-600">
             When your landlord issues an invoice, it’ll show up here with its status and due date.
           </p>
         </div>
       ) : (
         <div className="mt-6 overflow-hidden rounded-2xl border">
-          <table className="min-w-full divide-y divide-gray-200 text-sm">
-            <thead className="bg-gray-50">
-              <tr className="text-left">
-                <th className="px-4 py-3 font-semibold text-gray-700">Invoice</th>
-                <th className="px-4 py-3 font-semibold text-gray-700">Amount</th>
-                <th className="px-4 py-3 font-semibold text-gray-700">Status</th>
-                <th className="px-4 py-3 font-semibold text-gray-700">Due</th>
-                <th className="px-4 py-3"></th>
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50 text-left text-sm font-semibold text-gray-700">
+              <tr>
+                <th className="py-3 pl-4 pr-3">Invoice</th>
+                <th className="px-3 py-3">Amount</th>
+                <th className="px-3 py-3">Due</th>
+                <th className="px-3 py-3">Status</th>
+                <th className="py-3 pl-3 pr-4 text-right">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 bg-white">
-              {invoices!.map((inv) => {
-                const due = inv.due_date ? new Date(inv.due_date).toLocaleDateString() : "—";
+              {rows.map((row: any) => {
+                const id = row.id as string;
+                const num = row.number ?? `#${String(id).slice(0, 8)}`;
+                const href = `/tenant/invoices/${id}`;
                 return (
-                  <tr key={inv.id} className="hover:bg-gray-50/50">
-                    <td className="px-4 py-3">
-                      <div className="font-medium">{inv.ref}</div>
-                      <div className="text-xs text-gray-500">{inv.description ?? "—"}</div>
+                  <tr key={id} className="hover:bg-gray-50">
+                    {/* Make the first cell (Invoice) a link to the detail page */}
+                    <td className="py-3 pl-4 pr-3 text-sm font-medium text-gray-900">
+                      <Link href={href} className="hover:underline">
+                        {num}
+                      </Link>
                     </td>
-                    <td className="px-4 py-3">{formatAmount(inv.amount_cents, inv.currency)}</td>
-                    <td className="px-4 py-3"><StatusPill status={inv.status} /></td>
-                    <td className="px-4 py-3">{due}</td>
-                    <td className="px-4 py-3">
-                      {/* Placeholder actions; hook up when receipts/payments are ready */}
-                      {inv.status === "paid" ? (
-                        <button className="rounded-lg border px-3 py-1.5 text-xs font-medium hover:bg-gray-50" disabled>
-                          Receipt
-                        </button>
-                      ) : (
-                        <button className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700" disabled>
-                          Pay
-                        </button>
-                      )}
+                    <td className="px-3 py-3 text-sm text-gray-900">{formatMoney(row)}</td>
+                    <td className="px-3 py-3 text-sm text-gray-600">{formatDate(row.due_date)}</td>
+                    <td className="px-3 py-3 text-sm">
+                      <StatusBadge status={row.status} />
+                    </td>
+                    <td className="py-3 pl-3 pr-4 text-right text-sm">
+                      <Link
+                        href={href}
+                        className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 font-medium text-gray-900 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                      >
+                        View
+                      </Link>
                     </td>
                   </tr>
                 );
