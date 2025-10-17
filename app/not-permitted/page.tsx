@@ -1,30 +1,25 @@
 // app/not-permitted/page.tsx
-import Link from "next/link";
+import Link from 'next/link';
+import { cookies } from 'next/headers';
 
 export default function NotPermitted() {
-  return (
-    <section className="py-20">
-      <div className="mx-auto max-w-2xl px-4 text-center">
-        <h1 className="text-3xl font-extrabold tracking-tight">Not permitted</h1>
-        <p className="mt-2 text-neutral-600 dark:text-neutral-300">
-          You’re signed in but don’t have access to this section.
-        </p>
+  const role = cookies().get('rb_role')?.value as 'tenant' | 'landlord' | 'staff' | undefined;
+  const home =
+    role === 'staff' ? '/admin' : role === 'landlord' ? '/landlord' : role === 'tenant' ? '/tenant' : '/sign-in';
 
-        <div className="mt-6 flex items-center justify-center gap-3">
-          <Link
-            href="/sign-in"
-            className="px-5 py-3 rounded-xl font-semibold bg-emerald-600 hover:bg-emerald-700 text-white"
-          >
-            Go to sign in
-          </Link>
-          <Link
-            href="/"
-            className="px-5 py-3 rounded-xl font-semibold border border-neutral-200 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/10"
-          >
-            Back home
-          </Link>
-        </div>
+  return (
+    <div className="mx-auto max-w-xl px-6 py-16 text-center">
+      <h1 className="text-2xl font-semibold">Not permitted</h1>
+      <p className="mt-2 text-gray-600">You’re signed in but don’t have access to this section.</p>
+
+      <div className="mt-6 flex items-center justify-center gap-3">
+        <Link href="/sign-in" className="rounded-lg border px-4 py-2 font-medium">
+          Go to sign in
+        </Link>
+        <Link href={home} className="rounded-lg bg-emerald-600 px-4 py-2 font-semibold text-white">
+          Go to your dashboard
+        </Link>
       </div>
-    </section>
+    </div>
   );
 }
