@@ -1,4 +1,3 @@
-// app/api/tenant/invoices/[id]/pdf/route.ts
 import { NextResponse } from "next/server";
 import PDFDocument from "pdfkit";
 import { createRouteSupabase } from "@/lib/supabase/server";
@@ -26,6 +25,7 @@ export async function GET(
   const supabase = createRouteSupabase();
   const { id } = params;
 
+  // Fetch invoice
   const { data, error } = await supabase
     .from("invoices")
     .select(
@@ -51,11 +51,11 @@ export async function GET(
 
   const invoice = data;
 
-  // Build PDF into a Buffer
+  // Build PDF into a Node Buffer
   const doc = new PDFDocument({ size: "A4", margin: 48 });
   const chunks: Buffer[] = [];
   doc.on("data", (c) => chunks.push(c));
-  const finalize = new Promise<Buffer>((resolve) => {
+  const finalized: Promise<Buffer> = new Promise((resolve) => {
     doc.on("end", () => resolve(Buffer.concat(chunks)));
   });
 
@@ -64,10 +64,8 @@ export async function GET(
   doc.moveDown(0.5);
 
   // Meta
-  doc
-    .fontSize(10)
-    .fillColor("#111827")
-    .text(`Invoice #${invoice.number ?? invoice.id}`);
+  doc.fontSize(10).fillColor("#111827");
+  doc.text(`Invoice #${invoice.number ?? invoice.id}`);
   doc.text(`Status: ${(invoice.status ?? "").toUpperCase()}`);
   doc.text(
     `Issued: ${
@@ -86,18 +84,17 @@ export async function GET(
   const currency = invoice.currency ?? "PKR";
   doc.fontSize(12).fillColor("#111827").text(`Amount: ${amount} ${currency}`);
 
+  // Finalize PDF
   doc.end();
-  const pdfBuffer = await finalize;
+  const pdfBuffer = await finalized;
 
-  // ✅ Convert Buffer → Uint8Array (BlobPart friendly)
-  const uint8 = new Uint8Array(
-    pdfBuffer.buffer,
+  // ✅ Return an ArrayBuffer (BodyInit-safe) instead of Blob/Buffer
+  const arrayBuffer = pdfBuffer.buffer.slice(
     pdfBuffer.byteOffset,
-    pdfBuffer.byteLength
-  );
-  const blob = new Blob([uint8], { type: "application/pdf" });
+    pdfBuffer.byteOffset + pdfBuffer.byteLength
+  ) as ArrayBuffer;
 
-  return new NextResponse(blob, {
+  return new NextResponse(arrayBuffer, {
     headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": `inline; filename="invoice-${
