@@ -1,95 +1,84 @@
 // app/tenant/page.tsx
 import Link from "next/link";
+import { createServerSupabase } from "@/lib/supabase/server";
 
-export default function TenantHome() {
+export const dynamic = "force-dynamic";
+
+export default async function TenantPage() {
+  const supabase = createServerSupabase();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return (
+      <div className="mx-auto max-w-5xl px-6 py-10">
+        <h1 className="text-2xl font-semibold">Tenant dashboard</h1>
+        <p className="mt-2 text-gray-600">Please sign in to continue.</p>
+        <Link
+          href="/sign-in"
+          className="mt-6 inline-flex rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+        >
+          Sign in
+        </Link>
+      </div>
+    );
+  }
+
   return (
-    <main className="min-h-[80vh] bg-white">
-      {/* Hero */}
-      <section className="border-b bg-gradient-to-b from-emerald-50 to-white">
-        <div className="mx-auto max-w-6xl px-6 py-10">
-          <div className="flex items-center justify-between gap-4">
-            <h1 className="text-2xl font-bold tracking-tight text-gray-900">
-              Tenant dashboard
-            </h1>
-            <Link
-              href="/sign-out"
-              className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-900 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-emerald-600"
-            >
-              Sign out
-            </Link>
-          </div>
+    <div className="mx-auto max-w-6xl px-6 py-8">
+      {/* Header */}
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700/90">Tenant</p>
+          <h1 className="mt-1 text-3xl font-bold tracking-tight">Welcome back</h1>
+          <p className="mt-1 text-sm text-gray-600">{user.email}</p>
+        </div>
+      </div>
 
-          <p className="mt-2 max-w-2xl text-sm text-gray-600">
-            Welcome to RentBack. View invoices, download receipts, and track your rewards.
+      {/* Quick actions */}
+      <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <Link
+          href="/tenant/invoices"
+          className="rounded-2xl border bg-white p-5 shadow-sm transition hover:bg-gray-50"
+        >
+          <div className="text-sm font-semibold text-gray-900">Invoices</div>
+          <p className="mt-1 text-sm text-gray-600">
+            See issued, paid, and overdue invoices with amounts and due dates.
           </p>
+          <span className="mt-3 inline-flex rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white">
+            View invoices
+          </span>
+        </Link>
 
-          {/* Quick status row */}
-          <div className="mt-6 grid gap-4 sm:grid-cols-3">
-            <div className="rounded-2xl border p-4 shadow-sm">
-              <div className="text-xs font-semibold text-emerald-700">Invoices</div>
-              <div className="mt-1 text-2xl font-semibold">—</div>
-              <p className="mt-1 text-xs text-gray-500">Issued & due soon</p>
-            </div>
-            <div className="rounded-2xl border p-4 shadow-sm">
-              <div className="text-xs font-semibold text-emerald-700">Receipts</div>
-              <div className="mt-1 text-2xl font-semibold">—</div>
-              <p className="mt-1 text-xs text-gray-500">Available to download</p>
-            </div>
-            <div className="rounded-2xl border p-4 shadow-sm">
-              <div className="text-xs font-semibold text-emerald-700">Rewards</div>
-              <div className="mt-1 text-2xl font-semibold">—</div>
-              <p className="mt-1 text-xs text-gray-500">Points balance</p>
-            </div>
-          </div>
+        <Link
+          href="/tenant/rewards"
+          className="rounded-2xl border bg-white p-5 shadow-sm transition hover:bg-gray-50"
+        >
+          <div className="text-sm font-semibold text-gray-900">Rewards</div>
+          <p className="mt-1 text-sm text-gray-600">Track your points and available redemptions.</p>
+          <span className="mt-3 inline-flex rounded-lg border px-3 py-1.5 text-xs font-semibold">
+            View rewards
+          </span>
+        </Link>
+
+        <div className="rounded-2xl border bg-white p-5 opacity-75 shadow-sm">
+          <div className="text-sm font-semibold text-gray-900">Payments</div>
+          <p className="mt-1 text-sm text-gray-600">Pay securely (coming soon).</p>
+          <span className="mt-3 inline-flex rounded-lg border px-3 py-1.5 text-xs font-semibold">
+            Coming soon
+          </span>
         </div>
-      </section>
+      </div>
 
-      {/* Actions */}
-      <section className="mx-auto max-w-6xl px-6 py-10">
-        <div className="grid gap-5 md:grid-cols-2">
-          <div className="rounded-3xl border p-6 shadow-sm">
-            <h2 className="text-lg font-semibold">Invoices & payments</h2>
-            <p className="mt-2 text-sm text-gray-600">
-              Review your rent invoices and payment history in one place.
-            </p>
-            <div className="mt-4 flex gap-3">
-              <Link
-                href="/tenant/invoices"
-                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-600"
-              >
-                View invoices
-              </Link>
-              <Link
-                href="/tenant/receipts"
-                className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-900 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-emerald-600"
-              >
-                Download receipts
-              </Link>
-            </div>
-          </div>
-
-          <div className="rounded-3xl border p-6 shadow-sm">
-            <h2 className="text-lg font-semibold">Rewards</h2>
-            <p className="mt-2 text-sm text-gray-600">
-              Earn points on confirmed payments and redeem simple offers.
-            </p>
-            <div className="mt-4">
-              <Link
-                href="/tenant/rewards"
-                className="inline-flex rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-600"
-              >
-                View rewards
-              </Link>
-            </div>
-          </div>
+      {/* Placeholder for recent activity (safe to keep or remove) */}
+      <div className="mt-10 rounded-2xl border bg-white p-5 shadow-sm">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold">Recent activity</h2>
+          <span className="text-xs text-gray-500">Auto-updates as you pay invoices</span>
         </div>
-
-        {/* Help */}
-        <div className="mt-8 rounded-2xl border p-6 text-sm text-gray-600">
-          Having trouble? Try a hard reload (Cmd/Ctrl+Shift+R). If you still see access issues,
-          open <code className="rounded bg-gray-100 px-1 py-0.5">/api/auth/sync</code> once, then return here.
-        </div>
-      </section>
-    </main>
+        <div className="mt-4 text-sm text-gray-600">No recent activity yet.</div>
+      </div>
+    </div>
   );
 }
