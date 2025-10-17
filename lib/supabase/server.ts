@@ -1,31 +1,30 @@
-import { cookies } from 'next/headers';
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
+// lib/supabase/server.ts
+import { cookies } from "next/headers";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+/** Server-side Supabase client (Node runtime) */
+export function getSupabaseServer(): SupabaseClient {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  const cookieStore = cookies();
 
-/** Server/Route Supabase client (type inferred) */
-export function getSupabaseServer() {
-  const store = cookies();
-
-  return createServerClient(url, anon, {
+  // Use the SSR helper with a Next.js cookies adapter
+  const client = createServerClient(url, anon, {
     cookies: {
       get(name: string) {
-        return store.get(name)?.value;
+        return cookieStore.get(name)?.value;
       },
       set(name: string, value: string, options?: CookieOptions) {
-        store.set(name, value, options);
+        // Next 14 supports this overload: (name, value, options)
+        cookieStore.set(name, value, options);
       },
-      remove(name: string, options?: CookieOptions) {
-        store.set(name, '', { ...(options || {}), maxAge: 0 });
+      remove(name: string) {
+        cookieStore.delete(name);
       },
     },
-    global: { fetch },
   });
-}
 
-/** Back-compat exports so existing imports keep working */
-export const createServerSupabase = getSupabaseServer;
-export const createRouteSupabase = getSupabaseServer;
-export const supabaseServer = getSupabaseServer;
-export const supabaseRoute = getSupabaseServer;
+  // Loosen TS generics to avoid schema type mismatches
+  return client as unknown as SupabaseClient;
+}
