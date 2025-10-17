@@ -13,9 +13,11 @@ type InvoiceRow = {
   due_date?: string | null;
   total_amount?: number | null;
   currency?: string | null;
-  landlord_name?: string | null;
-  tenant_email?: string | null;
 };
+
+function isInvoiceRow(x: unknown): x is InvoiceRow {
+  return !!x && typeof x === "object" && "id" in (x as Record<string, unknown>);
+}
 
 export async function GET(
   _req: Request,
@@ -24,7 +26,6 @@ export async function GET(
   const supabase = createRouteSupabase();
   const { id } = params;
 
-  // Select only what we need; use maybeSingle to avoid array typing
   const { data, error } = await supabase
     .from("invoices")
     .select(
@@ -35,20 +36,20 @@ export async function GET(
         "issued_at",
         "due_date",
         "total_amount",
-        "currency"
+        "currency",
       ].join(",")
     )
     .eq("id", id)
     .maybeSingle();
 
-  if (error || !data) {
+  if (error || !isInvoiceRow(data)) {
     return NextResponse.json(
       { error: error?.message ?? "Invoice not found" },
       { status: 404 }
     );
   }
 
-  const invoice = data as InvoiceRow;
+  const invoice = data; // properly narrowed to InvoiceRow
 
   // Build PDF in-memory
   const doc = new PDFDocument({ size: "A4", margin: 48 });
@@ -80,7 +81,8 @@ export async function GET(
   doc.moveDown();
 
   // Amount
-  const amount = typeof invoice.total_amount === "number" ? invoice.total_amount : 0;
+  const amount =
+    typeof invoice.total_amount === "number" ? invoice.total_amount : 0;
   const currency = invoice.currency ?? "PKR";
   doc.fontSize(12).fillColor("#111827").text(`Amount: ${amount} ${currency}`);
 
@@ -90,8 +92,10 @@ export async function GET(
   return new NextResponse(pdf, {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="invoice-${invoice.number ?? invoice.id}.pdf"`,
-      "Cache-Control": "no-store"
-    }
+      "Content-Disposition": `inline; filename="invoice-${
+        invoice.number ?? invoice.id
+      }.pdf"`,
+      "Cache-Control": "no-store",
+    },
   });
 }
