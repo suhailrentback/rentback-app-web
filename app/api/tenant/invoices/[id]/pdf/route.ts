@@ -1,22 +1,20 @@
 import { NextResponse } from "next/server";
 import PDFDocument from "pdfkit";
 import { createRouteSupabase } from "@/lib/supabase/server";
+import { z } from "zod";
 
 export const runtime = "nodejs";
 
-type InvoiceRow = {
-  id: string;
-  number?: string | null;
-  status?: string | null;
-  issued_at?: string | null;
-  due_date?: string | null;
-  total_amount?: number | null;
-  currency?: string | null;
-};
-
-function isInvoiceRow(x: unknown): x is InvoiceRow {
-  return !!x && typeof x === "object" && "id" in (x as Record<string, unknown>);
-}
+const Invoice = z.object({
+  id: z.string(),
+  number: z.string().nullable().optional(),
+  status: z.string().nullable().optional(),
+  issued_at: z.string().nullable().optional(),
+  due_date: z.string().nullable().optional(),
+  total_amount: z.number().nullable().optional(),
+  currency: z.string().nullable().optional(),
+});
+type InvoiceRow = z.infer<typeof Invoice>;
 
 export async function GET(
   _req: Request,
@@ -27,20 +25,27 @@ export async function GET(
 
   const { data, error } = await supabase
     .from("invoices")
-    .select(
-      "id, number, status, issued_at, due_date, total_amount, currency"
-    )
+    .select("id, number, status, issued_at, due_date, total_amount, currency")
     .eq("id", id)
     .maybeSingle();
 
-  if (error || !isInvoiceRow(data)) {
+  if (error || !data) {
     return NextResponse.json(
       { error: error?.message ?? "Invoice not found" },
       { status: 404 }
     );
   }
 
-  const invoice = data;
+  // ✅ runtime-validate and narrow the type
+  let invoice: InvoiceRow;
+  try {
+    invoice = Invoice.parse(data);
+  } catch {
+    return NextResponse.json(
+      { error: "Invoice shape unexpected" },
+      { status: 500 }
+    );
+  }
 
   // Only allow receipts for PAID invoices
   const isPaid = String(invoice.status ?? "").toLowerCase() === "paid";
@@ -79,7 +84,7 @@ export async function GET(
 
   const pdfBuffer = await done;
 
-  // Return as ArrayBuffer so NextResponse's BodyInit is happy
+  // Return as ArrayBuffer so NextResponse’s BodyInit type is satisfied
   const arrayBuffer = pdfBuffer.buffer.slice(
     pdfBuffer.byteOffset,
     pdfBuffer.byteOffset + pdfBuffer.byteLength
