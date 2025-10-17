@@ -1,17 +1,15 @@
 // app/tenant/layout.tsx
-import { ReactNode } from "react";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { createServerSupabase } from "@/lib/supabase/server";
 
-export default async function TenantLayout({ children }: { children: ReactNode }) {
-  // Server-side: check only that the user is authenticated.
-  const supabase = await createServerSupabase();
-  const { data: { user } } = await supabase.auth.getUser();
+export default function TenantLayout({ children }: { children: React.ReactNode }) {
+  const role = cookies().get("rb_role")?.value || null;
 
-  if (!user) {
-    redirect("/sign-in?next=/tenant");
-  }
+  // Not signed in or no role cookie? Send to sign-in for this area.
+  if (!role) redirect("/sign-in?next=/tenant");
 
-  // ✅ No role/tenant-table check here (temporary).
+  // Signed-in but wrong role
+  if (role !== "tenant") redirect("/not-permitted");
+
   return <>{children}</>;
 }
