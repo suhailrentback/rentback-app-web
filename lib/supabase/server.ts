@@ -1,15 +1,12 @@
 // lib/supabase/server.ts
-// Server-side Supabase helpers (App Router)
-
-import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
-import { createClient as createAdminClient, type SupabaseClient } from "@supabase/supabase-js";
+import { cookies } from 'next/headers';
+import { createServerClient } from '@supabase/ssr';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-/** Internal factory so pages and route handlers use the same wiring */
-function makeServerClient() {
+/** Use inside Server Components & Route Handlers */
+export function createServerSupabase() {
   const cookieStore = cookies();
 
   return createServerClient(url, anon, {
@@ -17,32 +14,16 @@ function makeServerClient() {
       get(name: string) {
         return cookieStore.get(name)?.value;
       },
-      // Use the 3-arg API to avoid TS type mismatches with the object form
+      // keep types loose here; Next’s cookie store has multiple overloads
       set(name: string, value: string, options?: any) {
-        cookieStore.set(name, value, options as any);
+        cookieStore.set(name, value, options);
       },
       remove(name: string, options?: any) {
-        cookieStore.set(name, "", { ...(options || {}), maxAge: 0 });
+        cookieStore.set(name, '', { ...options, maxAge: 0 });
       },
     },
   });
 }
 
-/** For Server Components / layouts / pages */
-export function createServerSupabase() {
-  return makeServerClient();
-}
-
-/** For Route Handlers (app/api/*) */
-export function createRouteSupabase() {
-  return makeServerClient();
-}
-
-/** Admin client (service role) for server-only tasks like profile upserts */
-export function getSupabaseAdmin(): SupabaseClient {
-  const service = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  return createAdminClient(url, service);
-}
-
-/** Back-compat alias some files may import */
-export const getSupabaseServer = createServerSupabase;
+// Alias for route handlers (same thing)
+export const createRouteSupabase = createServerSupabase;
