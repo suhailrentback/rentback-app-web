@@ -9,28 +9,40 @@ export default function SignInPage() {
   const supabase = getSupabaseBrowser();
   const router = useRouter();
   const search = useSearchParams();
-  const next = search.get('next') || '/tenant';
+  const next = search.get('next'); // may be /tenant, /landlord, /admin, or null
 
   const [email, setEmail] = useState('');
   const [pw, setPw] = useState('');
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  function destForRole(role: 'tenant' | 'landlord' | 'staff') {
+    if (next && /^\/(tenant|landlord|admin)(\/|$)/.test(next)) {
+      // honor explicit next if it’s a known dashboard path
+      return next;
+    }
+    if (role === 'staff') return '/admin';
+    if (role === 'landlord') return '/landlord';
+    return '/tenant';
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
     setLoading(true);
+
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password: pw,
     });
+
     if (error) {
       setLoading(false);
       setErr(error.message);
       return;
     }
 
-    // ✅ Mirror session to server cookies + ensure role cookie
+    // Mirror session to server cookies + upsert profile/role + set rb_role
     const access_token = data.session?.access_token;
     const refresh_token = data.session?.refresh_token;
     if (access_token && refresh_token) {
@@ -42,14 +54,22 @@ export default function SignInPage() {
       }).catch(() => {});
     }
 
-    // Small pause to let cookies apply, then route
-    router.replace(next);
+    // Read role from server (authoritative) and route accordingly
+    let role: 'tenant' | 'landlord' | 'staff' = 'tenant';
+    try {
+      const r = await fetch('/api/auth/sync', { method: 'GET', credentials: 'include' });
+      const j = await r.json();
+      if (j?.role === 'landlord' || j?.role === 'staff' || j?.role === 'tenant') role = j.role;
+    } catch {}
+
+    router.replace(destForRole(role));
   }
 
   return (
     <div className="mx-auto max-w-md px-6 py-12">
       <h1 className="text-2xl font-semibold">Sign in</h1>
       <p className="mt-1 text-sm text-gray-600">Use your email and password.</p>
+
       <form onSubmit={onSubmit} className="mt-6 space-y-3">
         <input
           type="email"
