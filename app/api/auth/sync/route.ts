@@ -1,68 +1,61 @@
-// app/api/auth/sync/route.ts
-export const runtime = "nodejs";
+// /app/api/auth/sync/route.ts
+import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
+import { getSupabaseServer } from '@/lib/supabase/server';
 
-import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { getSupabaseServer } from "@/lib/supabase/server";
+export const runtime = 'nodejs';
 
 /**
  * Ensures there's a profile row + role, and sets rb_role cookie.
- * Returns { role }.
+ * Returns { role } for the currently signed-in user.
  */
 export async function GET() {
-  const res = NextResponse.json({ ok: true });
+  const supabase = getSupabaseServer();
 
-  try {
-    const supabase = getSupabaseServer();
-
-    // 1) Who is signed in?
-    const { data: userData, error: authErr } = await supabase.auth.getUser();
-    if (authErr || !userData?.user) {
-      // Clear role cookie if present
-      res.cookies.set("rb_role", "", { path: "/", maxAge: 0, sameSite: "lax" });
-      return NextResponse.json(
-        { role: null, error: authErr?.message ?? "No user" },
-        { status: 401 }
-      );
-    }
-
-    const userId = userData.user.id;
-
-    // 2) Try to read the role from profiles
-    let role: string | null = null;
-    const { data: prof, error: profErr } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", userId)
-      .single();
-
-    if (!profErr && prof?.role) {
-      role = prof.role as string;
-    } else {
-      // 3) If no row/role, upsert default tenant
-      const { error: upsertErr } = await supabase
-        .from("profiles")
-        .upsert({ id: userId, role: "tenant" }, { onConflict: "id" });
-
-      if (upsertErr) {
-        return NextResponse.json(
-          { role: null, error: upsertErr.message },
-          { status: 500 }
-        );
-      }
-      role = "tenant";
-    }
-
-    // 4) Set cookie for fast guards
-    res.cookies.set("rb_role", role, {
-      path: "/",
-      httpOnly: false, // readable by Server Components via next/headers
-      sameSite: "lax",
-      maxAge: 60 * 60 * 24 * 30, // 30 days
-    });
-
-    return NextResponse.json({ role });
-  } catch (e: any) {
-    return NextResponse.json({ role: null, error: String(e?.message || e) }, { status: 500 });
+  const { data: userRes, error: userErr } = await supabase.auth.getUser();
+  if (userErr || !userRes?.user) {
+    return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   }
+
+  const user = userRes.user;
+  let role: string | null = null;
+
+  // 1) Read role if profile exists
+  try {
+    const { data } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single();
+    role = data?.role ?? null;
+  } catch {
+    role = null;
+  }
+
+  // 2) If no row/role, upsert a default tenant role
+  if (!role) {
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .upsert({ id: user.id, email: user.email, role: 'tenant' }, { onConflict: 'id' })
+        .select('role')
+        .single();
+      role = data?.role ?? 'tenant';
+    } catch {
+      role = 'tenant';
+    }
+  }
+
+  // 3) Sync cookie so middleware/pages can route fast
+  const res = NextResponse.json({ role });
+  const maxAge = 60 * 60 * 24 * 7; // 7 days
+  cookies().set('rb_role', role!, {
+    path: '/',
+    httpOnly: false,
+    sameSite: 'lax',
+    secure: true,
+    maxAge,
+  });
+
+  return res;
 }
