@@ -4,6 +4,7 @@ import { createRouteSupabase } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
+// The row shape we expect back from Supabase
 type InvoiceRow = {
   id: string;
   number?: string | null;
@@ -12,10 +13,9 @@ type InvoiceRow = {
   due_date?: string | null;
   total_amount?: number | null;
   currency?: string | null;
-  // If you later add paid_at in your schema, you can include it here:
-  // paid_at?: string | null;
 };
 
+// Minimal type guard so TS stops treating data as GenericStringError
 function isInvoiceRow(x: unknown): x is InvoiceRow {
   return !!x && typeof x === "object" && "id" in (x as Record<string, unknown>);
 }
@@ -27,23 +27,15 @@ export async function GET(
   const supabase = createRouteSupabase();
   const { id } = params;
 
-  // Fetch the invoice row
+  // Fetch row; .returns<InvoiceRow>() helps TS too
   const { data, error } = await supabase
     .from("invoices")
     .select(
-      [
-        "id",
-        "number",
-        "status",
-        "issued_at",
-        "due_date",
-        "total_amount",
-        "currency",
-        // "paid_at", // uncomment if/when this column exists
-      ].join(",")
+      "id, number, status, issued_at, due_date, total_amount, currency"
     )
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle()
+    .returns<InvoiceRow>();
 
   if (error || !isInvoiceRow(data)) {
     return NextResponse.json(
@@ -52,9 +44,9 @@ export async function GET(
     );
   }
 
-  const invoice = data;
+  const invoice = data; // <-- now safely typed
 
-  // Must be paid to have a receipt
+  // Only allow receipts for PAID invoices
   const isPaid = String(invoice.status ?? "").toLowerCase() === "paid";
   if (!isPaid) {
     return NextResponse.json(
@@ -63,43 +55,29 @@ export async function GET(
     );
   }
 
-  // Build a simple PDF receipt
+  // Build a simple receipt PDF
   const doc = new PDFDocument({ size: "A4", margin: 48 });
-
   const chunks: Buffer[] = [];
   doc.on("data", (c) => chunks.push(c));
-  const finalized: Promise<Buffer> = new Promise((resolve) => {
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-  });
+  const finalized: Promise<Buffer> = new Promise((resolve) =>
+    doc.on("end", () => resolve(Buffer.concat(chunks)))
+  );
 
-  // Header
   doc.fontSize(18).text("Payment Receipt");
   doc.moveDown(0.5);
 
-  // Meta
   doc.fontSize(10).fillColor("#111827");
   doc.text(`Invoice #${invoice.number ?? invoice.id}`);
   doc.text(`Status: ${(invoice.status ?? "").toUpperCase()}`);
-  // doc.text(`Paid: ${invoice.paid_at ? new Date(invoice.paid_at).toDateString() : "—"}`); // if you add paid_at
   doc.moveDown();
 
-  // Amount
   const amount =
     typeof invoice.total_amount === "number" ? invoice.total_amount : 0;
   const currency = invoice.currency ?? "PKR";
   doc.fontSize(12).fillColor("#111827").text(`Amount Received: ${amount} ${currency}`);
 
-  doc.moveDown();
-  doc
-    .fontSize(10)
-    .fillColor("#374151")
-    .text(
-      "This receipt acknowledges full payment for the invoice listed above.",
-      { width: 480 }
-    );
-
-  // Finalize and return as ArrayBuffer (BodyInit-safe)
   doc.end();
+
   const pdfBuffer = await finalized;
   const arrayBuffer = pdfBuffer.buffer.slice(
     pdfBuffer.byteOffset,
