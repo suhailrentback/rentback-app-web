@@ -1,61 +1,68 @@
-// /app/api/auth/sync/route.ts
+// app/api/auth/sync/route.ts
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { getSupabaseServer } from '@/lib/supabase/server';
+import { createServerSupabase } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
 
-/**
- * Ensures there's a profile row + role, and sets rb_role cookie.
- * Returns { role } for the currently signed-in user.
- */
-export async function GET() {
-  const supabase = getSupabaseServer();
+type Body = {
+  access_token?: string;
+  refresh_token?: string;
+};
 
-  const { data: userRes, error: userErr } = await supabase.auth.getUser();
-  if (userErr || !userRes?.user) {
-    return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-  }
+async function upsertProfileRole(supabase: ReturnType<typeof createServerSupabase>) {
+  const { data: userData } = await supabase.auth.getUser();
+  const user = userData?.user ?? null;
+  if (!user) return null;
 
-  const user = userRes.user;
-  let role: string | null = null;
+  // Ensure profile row exists with a role
+  const { data: prof } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single();
 
-  // 1) Read role if profile exists
-  try {
-    const { data } = await supabase
+  let role = prof?.role ?? 'tenant';
+  if (!prof) {
+    const { data: inserted } = await supabase
       .from('profiles')
+      .insert({ id: user.id, email: user.email, role })
       .select('role')
-      .eq('id', user.id)
       .single();
-    role = data?.role ?? null;
-  } catch {
-    role = null;
+    role = inserted?.role ?? role;
   }
 
-  // 2) If no row/role, upsert a default tenant role
-  if (!role) {
-    try {
-      const { data } = await supabase
-        .from('profiles')
-        .upsert({ id: user.id, email: user.email, role: 'tenant' }, { onConflict: 'id' })
-        .select('role')
-        .single();
-      role = data?.role ?? 'tenant';
-    } catch {
-      role = 'tenant';
-    }
-  }
-
-  // 3) Sync cookie so middleware/pages can route fast
-  const res = NextResponse.json({ role });
-  const maxAge = 60 * 60 * 24 * 7; // 7 days
-  cookies().set('rb_role', role!, {
-    path: '/',
+  // Mirror role into a simple cookie the middleware can read
+  cookies().set({
+    name: 'rb_role',
+    value: String(role),
     httpOnly: false,
     sameSite: 'lax',
-    secure: true,
-    maxAge,
+    path: '/',
   });
 
-  return res;
+  return role as 'tenant' | 'landlord' | 'staff';
+}
+
+export async function POST(req: Request) {
+  const body = (await req.json().catch(() => ({}))) as Body;
+
+  const supabase = createServerSupabase();
+
+  // If tokens provided (email+password flow), set session cookies server-side
+  if (body.access_token && body.refresh_token) {
+    await supabase.auth.setSession({
+      access_token: body.access_token,
+      refresh_token: body.refresh_token,
+    });
+  }
+
+  const role = await upsertProfileRole(supabase);
+  return NextResponse.json({ role });
+}
+
+export async function GET() {
+  const supabase = createServerSupabase();
+  const role = await upsertProfileRole(supabase);
+  return NextResponse.json({ role });
 }
