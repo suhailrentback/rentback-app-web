@@ -3,14 +3,20 @@ import Link from "next/link";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { z } from "zod";
 
+// Ensure this page runs per-request (so cookies/auth work in prod)
+export const dynamic = "force-dynamic";
+export const revalidate = 0; // extra safety
+export const runtime = "nodejs";
+
 const Invoice = z.object({
   id: z.string(),
   number: z.string().nullable().optional(),
   status: z.string().nullable().optional(),
   issued_at: z.string().nullable().optional(),
   due_date: z.string().nullable().optional(),
-  amount_cents: z.number().nullable().optional(),
-  total_amount: z.number().nullable().optional(),
+  // Be lenient: DB numerics can arrive as strings in some drivers
+  amount_cents: z.coerce.number().nullable().optional(),
+  total_amount: z.coerce.number().nullable().optional(),
   currency: z.string().nullable().optional(),
   description: z.string().nullable().optional(),
 });
