@@ -1,4 +1,3 @@
-// app/api/tenant/invoices/[id]/pdf/route.ts
 import { NextResponse } from "next/server";
 import PDFDocument from "pdfkit";
 import { createRouteSupabase } from "@/lib/supabase/server";
@@ -6,25 +5,21 @@ import { z } from "zod";
 
 export const runtime = "nodejs";
 
-/** Runtime schema – coerces numeric strings to numbers safely. */
 const Invoice = z.object({
   id: z.string(),
   number: z.string().nullable().optional(),
   status: z.string().nullable().optional(),
   issued_at: z.string().nullable().optional(),
   due_date: z.string().nullable().optional(),
-  total_amount: z
-    .preprocess((val) => {
-      if (val == null) return null;
-      if (typeof val === "number") return val;
-      if (typeof val === "string") {
-        const n = Number(val.trim());
-        return Number.isFinite(n) ? n : NaN;
-      }
-      return NaN;
-    }, z.number())
-    .nullable()
-    .optional(),
+  total_amount: z.preprocess((val) => {
+    if (val == null) return null;
+    if (typeof val === "number") return val;
+    if (typeof val === "string") {
+      const n = Number(val.trim());
+      return Number.isFinite(n) ? n : NaN;
+    }
+    return NaN;
+  }, z.number()).nullable().optional(),
   currency: z.string().nullable().optional(),
 });
 type InvoiceRow = z.infer<typeof Invoice>;
@@ -36,7 +31,7 @@ export async function GET(
   const supabase = createRouteSupabase();
   const { id } = params;
 
-  // ✅ No generics on .from(); validate the shape with Zod instead
+  // ✅ No generics; we validate with Zod.
   const { data, error } = await supabase
     .from("invoices")
     .select("id, number, status, issued_at, due_date, total_amount, currency")
@@ -52,10 +47,7 @@ export async function GET(
 
   const parsed = Invoice.safeParse(data);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invoice shape unexpected" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Invoice shape unexpected" }, { status: 500 });
   }
   const invoice: InvoiceRow = parsed.data;
 
@@ -72,21 +64,15 @@ export async function GET(
   doc.fontSize(10).fillColor("#111827");
   doc.text(`Invoice #${invoice.number ?? invoice.id}`);
   doc.text(`Status: ${(invoice.status ?? "").toUpperCase()}`);
-  doc.text(
-    `Issued: ${
-      invoice.issued_at ? new Date(invoice.issued_at).toDateString() : "—"
-    }`
-  );
-  doc.text(
-    `Due: ${invoice.due_date ? new Date(invoice.due_date).toDateString() : "—"}`
-  );
+  doc.text(`Issued: ${invoice.issued_at ? new Date(invoice.issued_at).toDateString() : "—"}`);
+  doc.text(`Due: ${invoice.due_date ? new Date(invoice.due_date).toDateString() : "—"}`);
   const amt = typeof invoice.total_amount === "number" ? invoice.total_amount : 0;
   doc.text(`Total: ${amt} ${invoice.currency ?? "PKR"}`);
   doc.end();
 
   const pdfBuffer = await done;
 
-  // Return as ArrayBuffer so NextResponse BodyInit is satisfied (Node runtime)
+  // Return as ArrayBuffer so NextResponse BodyInit is satisfied
   const arrayBuffer = pdfBuffer.buffer.slice(
     pdfBuffer.byteOffset,
     pdfBuffer.byteOffset + pdfBuffer.byteLength
@@ -95,9 +81,7 @@ export async function GET(
   return new NextResponse(arrayBuffer, {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="invoice-${
-        invoice.number ?? invoice.id
-      }.pdf"`,
+      "Content-Disposition": `inline; filename="invoice-${invoice.number ?? invoice.id}.pdf"`,
       "Cache-Control": "no-store",
     },
   });
