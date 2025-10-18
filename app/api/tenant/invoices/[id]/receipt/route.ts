@@ -5,21 +5,27 @@ import { z } from "zod";
 
 export const runtime = "nodejs";
 
+// DB row shape we select (raw)
+type DbInvoiceRow = {
+  id: string;
+  number: string | null;
+  status: string | null;
+  issued_at: string | null;
+  due_date: string | null;
+  amount_cents: number | null;
+  total_amount: number | null;
+  currency: string | null;
+};
+
+// Runtime guard (handles numbers that might come back as strings)
 const Invoice = z.object({
   id: z.string(),
   number: z.string().nullable().optional(),
   status: z.string().nullable().optional(),
   issued_at: z.string().nullable().optional(),
   due_date: z.string().nullable().optional(),
-  total_amount: z.preprocess((val) => {
-    if (val == null) return null;
-    if (typeof val === "number") return val;
-    if (typeof val === "string") {
-      const n = Number(val.trim());
-      return Number.isFinite(n) ? n : NaN;
-    }
-    return NaN;
-  }, z.number()).nullable().optional(),
+  amount_cents: z.preprocess((v) => (typeof v === "string" ? parseInt(v, 10) : v), z.number()).nullable().optional(),
+  total_amount: z.preprocess((v) => (typeof v === "string" ? parseFloat(v) : v), z.number()).nullable().optional(),
   currency: z.string().nullable().optional(),
 });
 type InvoiceRow = z.infer<typeof Invoice>;
@@ -31,11 +37,12 @@ export async function GET(
   const supabase = createRouteSupabase();
   const { id } = params;
 
-  // ✅ No generics; validate with Zod to avoid GenericStringError typing
+  // ✅ Strong type on the query so we never see GenericStringError
   const { data, error } = await supabase
     .from("invoices")
-    .select("id, number, status, issued_at, due_date, total_amount, currency")
+    .select("id, number, status, issued_at, due_date, amount_cents, total_amount, currency")
     .eq("id", id)
+    .returns<DbInvoiceRow>()
     .maybeSingle();
 
   if (error || !data) {
@@ -45,11 +52,13 @@ export async function GET(
     );
   }
 
-  const parsed = Invoice.safeParse(data);
-  if (!parsed.success) {
+  // Validate & normalize
+  let invoice: InvoiceRow;
+  try {
+    invoice = Invoice.parse(data);
+  } catch {
     return NextResponse.json({ error: "Invoice shape unexpected" }, { status: 500 });
   }
-  const invoice: InvoiceRow = parsed.data;
 
   // Only allow receipts for PAID invoices
   const isPaid = String(invoice.status ?? "").toLowerCase() === "paid";
@@ -58,9 +67,9 @@ export async function GET(
       { error: "Receipt is only available for PAID invoices" },
       { status: 409 }
     );
-    }
+  }
 
-  // ---- Build a simple receipt PDF (in-memory) ----
+  // Build minimal receipt PDF in-memory
   const doc = new PDFDocument({ size: "A4", margin: 48 });
   const chunks: Buffer[] = [];
   doc.on("data", (c) => chunks.push(c));
@@ -68,20 +77,20 @@ export async function GET(
     doc.on("end", () => resolve(Buffer.concat(chunks)))
   );
 
-  doc.fontSize(18).text("Payment Receipt", { align: "left" });
+  doc.fontSize(16).text("Payment Receipt");
   doc.moveDown(0.5);
   doc.fontSize(10).fillColor("#111827");
   doc.text(`Invoice #${invoice.number ?? invoice.id}`);
   doc.text(`Status: ${(invoice.status ?? "").toUpperCase()}`);
   doc.text(`Issued: ${invoice.issued_at ? new Date(invoice.issued_at).toDateString() : "—"}`);
   doc.text(`Due: ${invoice.due_date ? new Date(invoice.due_date).toDateString() : "—"}`);
-  const amt = typeof invoice.total_amount === "number" ? invoice.total_amount : 0;
+  const amt = typeof invoice.total_amount === "number" ? invoice.total_amount : (typeof invoice.amount_cents === "number" ? invoice.amount_cents / 100 : 0);
   doc.text(`Amount Received: ${amt} ${invoice.currency ?? "PKR"}`);
   doc.end();
 
   const pdfBuffer = await done;
 
-  // Return as ArrayBuffer so NextResponse BodyInit is satisfied
+  // Return as ArrayBuffer so NextResponse body type is happy in Node runtimes
   const arrayBuffer = pdfBuffer.buffer.slice(
     pdfBuffer.byteOffset,
     pdfBuffer.byteOffset + pdfBuffer.byteLength
