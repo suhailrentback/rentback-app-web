@@ -1,7 +1,7 @@
 // app/sign-up/page.tsx
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { z } from "zod";
@@ -10,7 +10,23 @@ import { getSupabaseBrowser } from "@/lib/supabase";
 const formSchema = z.object({
   email: z.string().email("Enter a valid email"),
   password: z.string().min(8, "At least 8 characters"),
+  confirm: z.string().min(8, "Confirm your password"),
+}).refine((vals) => vals.password === vals.confirm, {
+  path: ["confirm"],
+  message: "Passwords do not match",
 });
+
+function scorePassword(pwd: string) {
+  let score = 0;
+  if (pwd.length >= 8) score++;
+  if (/[A-Z]/.test(pwd)) score++;
+  if (/[a-z]/.test(pwd)) score++;
+  if (/\d/.test(pwd)) score++;
+  if (/[^A-Za-z0-9]/.test(pwd)) score++;
+  // normalize to 0..4
+  return Math.min(4, Math.max(0, score - 1));
+}
+const labels = ["Weak", "Fair", "Good", "Strong", "Very strong"];
 
 export default function SignUpPage() {
   const router = useRouter();
@@ -19,17 +35,22 @@ export default function SignUpPage() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+
+  const s = useMemo(() => scorePassword(password), [password]);
+  const pct = ((s + 1) / 5) * 100;
+  const strengthLabel = labels[s];
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setFormError(null);
     setInfo(null);
 
-    const parsed = formSchema.safeParse({ email, password });
+    const parsed = formSchema.safeParse({ email, password, confirm });
     if (!parsed.success) {
       setFormError(parsed.error.issues[0]?.message ?? "Invalid form");
       return;
@@ -46,7 +67,6 @@ export default function SignUpPage() {
       });
 
       if (error) {
-        // common Supabase messages mapped to friendlier text
         if (error.message?.toLowerCase().includes("already registered")) {
           setFormError("This email is already registered. Try signing in instead.");
         } else {
@@ -55,21 +75,18 @@ export default function SignUpPage() {
         return;
       }
 
-      // 2) If your project requires email confirmation, there won't be a session yet.
+      // 2) If confirmation is required, send user to a dedicated page
       if (!data.session) {
-        setInfo(
-          "We sent you a confirmation email. Please open it and click the link to verify your account."
-        );
+        router.replace(`/check-email?email=${encodeURIComponent(email)}`);
         return;
       }
 
-      // 3) Session exists (no confirmation required) — sync profile + role cookie
+      // 3) Otherwise, sync + route by role
       try {
         const res = await fetch("/api/auth/sync", { cache: "no-store" });
         const j = (await res.json()) as { role?: string | null };
         const role = (j.role || "tenant").toLowerCase();
 
-        // honor ?next= if present, otherwise route by role
         const target =
           nextParam ||
           (role === "landlord"
@@ -80,7 +97,6 @@ export default function SignUpPage() {
 
         router.replace(target);
       } catch {
-        // If sync hiccups, still land on a safe default
         router.replace(nextParam || "/tenant");
       }
     } finally {
@@ -127,6 +143,35 @@ export default function SignUpPage() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="At least 8 characters"
+            required
+          />
+          <div className="mt-2">
+            <div className="h-2 w-full rounded-full bg-gray-200">
+              <div
+                className="h-2 rounded-full transition-all"
+                style={{
+                  width: `${pct}%`,
+                  background:
+                    s <= 1 ? "#f87171" : s === 2 ? "#fbbf24" : s === 3 ? "#34d399" : "#10b981",
+                }}
+              />
+            </div>
+            <p className="mt-1 text-xs text-gray-600">Strength: {strengthLabel}</p>
+          </div>
+        </div>
+
+        <div>
+          <label htmlFor="confirm" className="block text-sm font-medium">
+            Confirm password
+          </label>
+          <input
+            id="confirm"
+            type="password"
+            autoComplete="new-password"
+            className="mt-1 w-full rounded-xl border px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            placeholder="Re-enter your password"
             required
           />
         </div>
