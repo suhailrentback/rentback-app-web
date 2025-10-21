@@ -1,103 +1,71 @@
-// app/check-email/page.tsx
-"use client";
+'use client';
 
-import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
-// ⬇️ changed: import from client-only module
-import { getSupabaseBrowser } from "@/lib/supabase/client";
+import { useSearchParams } from 'next/navigation';
+import Link from 'next/link';
+import { useState } from 'react';
+import { getSupabaseBrowser } from '@/lib/supabase/client';
 
 export default function CheckEmailPage() {
-  const params = useSearchParams();
-  const email = params.get("email") || "";
-
-  const [status, setStatus] = useState<"idle" | "resending" | "sent" | "error">("idle");
-  const [message, setMessage] = useState<string | null>(null);
-
-  const domainHref = useMemo(() => {
-    const domain = email.split("@")[1]?.toLowerCase() || "";
-    if (domain.includes("gmail")) return "https://mail.google.com";
-    if (domain.includes("outlook") || domain.includes("hotmail") || domain.includes("live"))
-      return "https://outlook.live.com/mail";
-    if (domain.includes("yahoo")) return "https://mail.yahoo.com";
-    return domain ? `https://www.${domain}` : "https://mail.google.com";
-  }, [email]);
+  const search = useSearchParams();
+  const email = search.get('email') ?? '';
+  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [msg, setMsg] = useState<string | null>(null);
 
   async function handleResend() {
     if (!email) return;
-    setStatus("resending");
-    setMessage(null);
+    setStatus('sending');
+    setMsg(null);
+
     try {
       const supabase = getSupabaseBrowser();
-      // @ts-expect-error — .resend may not exist in older supabase-js, guarded by try/catch.
-      const { error } = await supabase.auth.resend({ type: "signup", email });
-      if (error) {
-        setStatus("error");
-        setMessage(error.message || "Could not resend verification email.");
-        return;
+      const resend = (supabase as any)?.auth?.resend;
+
+      if (typeof resend === 'function') {
+        const { error } = await resend({ type: 'signup', email });
+        if (error) throw error;
+        setStatus('sent');
+        setMsg('Verification email resent. Check your inbox.');
+      } else {
+        // Library doesn’t expose `auth.resend` — just inform the user.
+        setStatus('error');
+        setMsg('Resend isn’t available right now. Please wait a minute and try again.');
       }
-      setStatus("sent");
-      setMessage("Verification email resent. Check your inbox (and spam).");
-    } catch (e: any) {
-      setStatus("error");
-      setMessage(e?.message || "Resend not available. Try again shortly.");
+    } catch (_e) {
+      setStatus('error');
+      setMsg('Couldn’t resend right now. Please try again in a minute.');
     }
   }
 
-  useEffect(() => {
-    if (!email) {
-      setMessage("We sent a confirmation email to your address. Please check your inbox.");
-    }
-  }, [email]);
-
   return (
-    <main className="mx-auto max-w-md px-4 py-12">
-      <h1 className="text-2xl font-semibold">Check your email</h1>
-      <p className="mt-3 text-gray-700">
-        We’ve sent a verification link
-        {email ? <> to <span className="font-medium">{email}</span></> : null}. Click the link in that email to verify your account.
+    <main className="mx-auto max-w-md p-6">
+      <h1 className="text-2xl font-semibold mb-2">Check your email</h1>
+      <p className="text-sm text-gray-600 mb-4">
+        We sent a verification link to{' '}
+        <span className="font-medium">{email || 'your inbox'}</span>. Click it to continue.
       </p>
 
-      <div className="mt-6 space-y-3">
-        <a
-          href={domainHref}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex w-full items-center justify-center rounded-xl border px-4 py-2 hover:bg-gray-50"
-        >
-          Open your mailbox
-        </a>
-
+      <div className="flex items-center gap-3">
         <button
           onClick={handleResend}
-          disabled={!email || status === "resending"}
-          className="inline-flex w-full items-center justify-center rounded-xl bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:opacity-60"
+          disabled={status === 'sending'}
+          className="rounded-lg border px-3 py-2 text-sm"
         >
-          {status === "resending" ? "Resending…" : "Resend verification email"}
+          {status === 'sending' ? 'Sending…' : 'Resend email'}
         </button>
-
-        <div className="text-sm text-gray-600">
-          Didn’t get it? Check your spam folder or{" "}
-          <Link href="/sign-up" className="text-blue-600 hover:underline">
-            try a different email
-          </Link>
-          .
-        </div>
+        <Link href="/sign-in" className="text-sm underline">
+          Back to sign in
+        </Link>
       </div>
 
-      {message ? (
-        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          {message}
-        </div>
-      ) : null}
-
-      <p className="mt-8 text-sm text-gray-600">
-        Already verified?{" "}
-        <Link href="/sign-in" className="text-blue-600 hover:underline">
-          Sign in
-        </Link>
-        .
-      </p>
+      {msg && (
+        <p
+          className={`mt-3 text-sm ${
+            status === 'sent' ? 'text-green-700' : status === 'error' ? 'text-red-700' : 'text-gray-600'
+          }`}
+        >
+          {msg}
+        </p>
+      )}
     </main>
   );
 }
