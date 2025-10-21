@@ -108,4 +108,13 @@ export async function middleware(req: NextRequest) {
 
 export const config = {
   matcher: ['/((?!.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp|avif)$).*)'],
+  const PUBLIC_PATHS = new Set<string>([
+  "/",                   // home/marketing
+  "/sign-in",
+  "/sign-up",            // << add
+  "/auth/verify",        // << add
+  "/auth/callback",      // Supabase email redirect lands here
+  "/not-permitted",
+  // keep any other existing public routes...
+]);
 };
