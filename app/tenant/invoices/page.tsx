@@ -27,6 +27,17 @@ function formatMoney(v: number | null | undefined, ccy?: string | null) {
   return `${v} ${c}`;
 }
 
+function buildQueryString(
+  params: Record<string, string | undefined | null>
+): string {
+  const sp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && String(v).length > 0) sp.set(k, String(v));
+  }
+  const qs = sp.toString();
+  return qs ? `?${qs}` : "";
+}
+
 export default async function TenantInvoicesPage({
   searchParams,
 }: {
@@ -37,8 +48,10 @@ export default async function TenantInvoicesPage({
     issued_to?: string;
     due_from?: string;
     due_to?: string;
-    min?: string; // min total_amount (display currency)
+    min?: string; // min total_amount
     max?: string; // max total_amount
+    page?: string;
+    pageSize?: string;
   };
 }) {
   const supabase = createServerSupabase();
@@ -56,14 +69,7 @@ export default async function TenantInvoicesPage({
 
   if (!me || String(me.role) !== "tenant") notFound();
 
-  // Build query with optional filters (server-side)
-  let query = supabase
-    .from("invoices")
-    .select(
-      "id, number, status, issued_at, due_date, total_amount, currency, description"
-    )
-    .eq("tenant_id", user.id);
-
+  // Read filters
   const q = (searchParams?.q ?? "").trim();
   const status = (searchParams?.status ?? "").trim().toLowerCase();
   const issued_from = searchParams?.issued_from?.trim();
@@ -73,12 +79,28 @@ export default async function TenantInvoicesPage({
   const min = Number(searchParams?.min);
   const max = Number(searchParams?.max);
 
+  // Pagination (safe bounds)
+  const page = Math.max(1, parseInt(searchParams?.page ?? "1", 10) || 1);
+  const pageSize = Math.min(
+    50,
+    Math.max(5, parseInt(searchParams?.pageSize ?? "10", 10) || 10)
+  );
+  const start = (page - 1) * pageSize;
+  const end = start + pageSize; // fetch one extra row to detect "hasNext"
+
+  // Build query with optional filters (server-side)
+  let query = supabase
+    .from("invoices")
+    .select(
+      "id, number, status, issued_at, due_date, total_amount, currency, description"
+    )
+    .eq("tenant_id", user.id);
+
   if (status && ["open", "paid", "void"].includes(status)) {
     query = query.eq("status", status);
   }
 
   if (q) {
-    // match invoice number OR description
     const like = `%${q}%`;
     query = query.or(`number.ilike.${like},description.ilike.${like}`);
   }
@@ -90,19 +112,40 @@ export default async function TenantInvoicesPage({
   if (!Number.isNaN(min)) query = query.gte("total_amount", min);
   if (!Number.isNaN(max)) query = query.lte("total_amount", max);
 
-  query = query.order("issued_at", { ascending: false });
+  // Stable order, then range
+  query = query.order("issued_at", { ascending: false }).range(start, end);
 
   const { data, error } = await query;
-  const safe = Invoice.array().safeParse(data ?? []);
-  const invoices: InvoiceRow[] = safe.success ? safe.data : [];
+  const parsed = Invoice.array().safeParse(data ?? []);
+  const rows: InvoiceRow[] = parsed.success ? parsed.data : [];
+  const hasNext = rows.length > pageSize;
+  const invoices = rows.slice(0, pageSize);
+  const hasPrev = page > 1;
+
+  // Helper to preserve filters across page nav
+  const baseParams = {
+    q,
+    status,
+    issued_from,
+    issued_to,
+    due_from,
+    due_to,
+    min: Number.isNaN(min) ? undefined : String(min),
+    max: Number.isNaN(max) ? undefined : String(max),
+    pageSize: String(pageSize),
+  };
+
+  const prevHref = hasPrev
+    ? buildQueryString({ ...baseParams, page: String(page - 1) })
+    : "";
+  const nextHref = hasNext
+    ? buildQueryString({ ...baseParams, page: String(page + 1) })
+    : "";
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">
       <div className="mb-4">
-        <Link
-          href="/tenant"
-          className="text-sm text-blue-600 hover:underline"
-        >
+        <Link href="/tenant" className="text-sm text-blue-600 hover:underline">
           ← Back to dashboard
         </Link>
       </div>
@@ -225,6 +268,24 @@ export default async function TenantInvoicesPage({
               className="mt-1 w-full rounded-md border px-3 py-2"
             />
           </div>
+
+          {/* Optional pageSize control (kept minimal) */}
+          <div>
+            <label className="block text-sm font-medium" htmlFor="pageSize">
+              Page size
+            </label>
+            <select
+              id="pageSize"
+              name="pageSize"
+              defaultValue={String(pageSize)}
+              className="mt-1 w-full rounded-md border px-3 py-2"
+            >
+              <option value="10">10</option>
+              <option value="20">20</option>
+              <option value="30">30</option>
+              <option value="50">50</option>
+            </select>
+          </div>
         </div>
 
         <div className="mt-4 flex items-center gap-3">
@@ -262,9 +323,7 @@ export default async function TenantInvoicesPage({
               <tr>
                 <td colSpan={7} className="px-4 py-10 text-center text-gray-600">
                   <div className="mb-1 text-base font-medium">No invoices found</div>
-                  <div className="text-xs">
-                    Adjust filters or clear them to see everything.
-                  </div>
+                  <div className="text-xs">Adjust filters or clear them to see everything.</div>
                 </td>
               </tr>
             ) : (
@@ -293,9 +352,7 @@ export default async function TenantInvoicesPage({
                     <td className="px-4 py-3">{due}</td>
                     <td className="px-4 py-3">
                       {formatMoney(
-                        typeof inv.total_amount === "number"
-                          ? inv.total_amount
-                          : null,
+                        typeof inv.total_amount === "number" ? inv.total_amount : null,
                         inv.currency
                       )}
                     </td>
@@ -313,6 +370,31 @@ export default async function TenantInvoicesPage({
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* Pager */}
+      <div className="mt-4 flex items-center justify-between">
+        <div className="text-sm text-gray-600">Page {page}</div>
+        <div className="flex gap-2">
+          <Link
+            aria-disabled={!hasPrev}
+            href={hasPrev ? prevHref || "/tenant/invoices" : "#"}
+            className={`rounded-md border px-3 py-2 text-sm ${
+              hasPrev ? "hover:bg-gray-50" : "pointer-events-none opacity-50"
+            }`}
+          >
+            ← Previous
+          </Link>
+          <Link
+            aria-disabled={!hasNext}
+            href={hasNext ? nextHref || "/tenant/invoices" : "#"}
+            className={`rounded-md border px-3 py-2 text-sm ${
+              hasNext ? "hover:bg-gray-50" : "pointer-events-none opacity-50"
+            }`}
+          >
+            Next →
+          </Link>
+        </div>
       </div>
     </main>
   );
