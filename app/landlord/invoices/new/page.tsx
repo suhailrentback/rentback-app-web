@@ -1,131 +1,152 @@
 // app/landlord/invoices/new/page.tsx
+"use client";
+
+import { useState } from "react";
 import Link from "next/link";
 
-export const dynamic = "force-static"; // simple static form page
-
 export default function NewInvoicePage() {
+  const [tenantEmail, setTenantEmail] = useState("");
+  const [description, setDescription] = useState("");
+  const [total, setTotal] = useState<string>("");
+  const [currency, setCurrency] = useState("PKR");
+  const [due, setDue] = useState<string>(""); // yyyy-mm-dd
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<{ ok?: boolean; id?: string; number?: string; error?: string } | null>(null);
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    setResult(null);
+    try {
+      const res = await fetch("/api/landlord/invoices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenant_email: tenantEmail,
+          description,
+          total_amount: Number(total),
+          currency,
+          due_date: due ? new Date(due).toISOString() : undefined,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setResult({ error: json?.error ? String(json.error) : "Failed to create invoice" });
+      } else {
+        setResult(json);
+        // clear form
+        setTenantEmail("");
+        setDescription("");
+        setTotal("");
+        setCurrency("PKR");
+        setDue("");
+      }
+    } catch (err: any) {
+      setResult({ error: err?.message ?? "Network error" });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
-    <main className="mx-auto max-w-2xl px-6 py-10">
-      <div className="mb-6 flex items-center gap-3">
-        <Link href="/landlord" className="text-sm text-blue-600 hover:underline">
+    <div className="mx-auto max-w-2xl px-6 py-10">
+      <div className="mb-6">
+        <Link href="/landlord" className="text-sm text-gray-600 hover:underline">
           ← Back to landlord dashboard
         </Link>
-        <span className="text-gray-400">/</span>
-        <span className="font-medium">Create invoice</span>
       </div>
 
-      <h1 className="mb-2 text-2xl font-semibold">Create invoice</h1>
-      <p className="mb-8 text-sm text-gray-600">
-        Internal tool: enter the tenant’s UUID directly for now (we’ll upgrade
-        to search-by-email after we add a safe admin lookup).
-      </p>
+      <h1 className="text-2xl font-semibold">Create invoice</h1>
+      <p className="mt-1 text-sm text-gray-600">Issue an invoice to a tenant by email.</p>
 
-      <form
-        action="/api/landlord/invoices"
-        method="post"
-        className="grid gap-5"
-      >
+      <form onSubmit={onSubmit} className="mt-6 space-y-5">
         <div>
-          <label htmlFor="tenant_id" className="block text-sm font-medium">
-            Tenant ID (UUID)
-          </label>
+          <label className="block text-sm font-medium">Tenant email</label>
           <input
-            id="tenant_id"
-            name="tenant_id"
+            type="email"
             required
-            placeholder="6746a57e-fafd-4718-811d-49130102795a"
+            value={tenantEmail}
+            onChange={(e) => setTenantEmail(e.target.value)}
             className="mt-1 w-full rounded-md border px-3 py-2"
+            placeholder="tenant@example.com"
           />
         </div>
 
         <div>
-          <label htmlFor="number" className="block text-sm font-medium">
-            Invoice number (optional)
-          </label>
+          <label className="block text-sm font-medium">Description</label>
           <input
-            id="number"
-            name="number"
-            placeholder="INV-2025-001"
+            type="text"
+            required
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
             className="mt-1 w-full rounded-md border px-3 py-2"
+            placeholder="October rent"
           />
         </div>
 
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-          <div>
-            <label htmlFor="amount_rupees" className="block text-sm font-medium">
-              Amount (rupees)
-            </label>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="col-span-2">
+            <label className="block text-sm font-medium">Total amount</label>
             <input
-              id="amount_rupees"
-              name="amount_rupees"
               type="number"
-              step="1"
               min="0"
+              step="0.01"
               required
+              value={total}
+              onChange={(e) => setTotal(e.target.value)}
+              className="mt-1 w-full rounded-md border px-3 py-2"
               placeholder="25000"
-              className="mt-1 w-full rounded-md border px-3 py-2"
             />
           </div>
           <div>
-            <label htmlFor="currency" className="block text-sm font-medium">
-              Currency
-            </label>
+            <label className="block text-sm font-medium">Currency</label>
             <input
-              id="currency"
-              name="currency"
-              defaultValue="PKR"
+              type="text"
               maxLength={3}
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value.toUpperCase())}
               className="mt-1 w-full rounded-md border px-3 py-2 uppercase"
-            />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-          <div>
-            <label htmlFor="issued_at" className="block text-sm font-medium">
-              Issued on
-            </label>
-            <input
-              id="issued_at"
-              name="issued_at"
-              type="date"
-              className="mt-1 w-full rounded-md border px-3 py-2"
-            />
-          </div>
-          <div>
-            <label htmlFor="due_date" className="block text-sm font-medium">
-              Due date
-            </label>
-            <input
-              id="due_date"
-              name="due_date"
-              type="date"
-              required
-              className="mt-1 w-full rounded-md border px-3 py-2"
+              placeholder="PKR"
             />
           </div>
         </div>
 
         <div>
-          <label htmlFor="description" className="block text-sm font-medium">
-            Description
-          </label>
-          <textarea
-            id="description"
-            name="description"
-            rows={3}
-            placeholder="October rent"
+          <label className="block text-sm font-medium">Due date</label>
+          <input
+            type="date"
+            value={due}
+            onChange={(e) => setDue(e.target.value)}
             className="mt-1 w-full rounded-md border px-3 py-2"
           />
+          <p className="mt-1 text-xs text-gray-500">Leave empty to default to +14 days.</p>
         </div>
 
-        <button
-          type="submit"
-          className="inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
-        >
-          Create invoice
-        </button>
+        <div className="flex items-center gap-3 pt-2">
+          <button
+            type="submit"
+            disabled={submitting}
+            className="rounded-md bg-black px-4 py-2 text-white disabled:opacity-50"
+          >
+            {submitting ? "Creating..." : "Create invoice"}
+          </button>
+          <Link href="/landlord" className="rounded-md border px-4 py-2 hover:bg-gray-50">
+            Cancel
+          </Link>
+        </div>
+
+        {result?.error && (
+          <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {result.error}
+          </div>
+        )}
+        {result?.ok && (
+          <div className="rounded-md border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-700">
+            Invoice <span className="font-mono">{result.number}</span> created.
+            Tenants will see it in their dashboard.
+          </div>
+        )}
       </form>
-    </main>
+    </div>
   );
 }
