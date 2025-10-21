@@ -371,6 +371,24 @@ export default async function TenantInvoicesPage({
           </tbody>
         </table>
       </div>
+      {/* After the Reset link in the filters form button row */}
+<Link
+  href={`/api/tenant/invoices/export${buildQueryString({
+    q,
+    status,
+    issued_from,
+    issued_to,
+    due_from,
+    due_to,
+    min: Number.isNaN(min) ? undefined : String(min),
+    max: Number.isNaN(max) ? undefined : String(max),
+    // no page/pageSize in exports
+  })}`}
+  className="rounded-md border px-4 py-2 hover:bg-gray-50"
+  target="_blank"
+>
+  Export CSV
+</Link>
 
       {/* Pager */}
       <div className="mt-4 flex items-center justify-between">
