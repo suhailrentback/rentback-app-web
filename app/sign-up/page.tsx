@@ -5,16 +5,19 @@ import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { z } from "zod";
-import { getSupabaseBrowser } from "@/lib/supabase";
+// ⬇️ changed: import from client-only module
+import { getSupabaseBrowser } from "@/lib/supabase/client";
 
-const formSchema = z.object({
-  email: z.string().email("Enter a valid email"),
-  password: z.string().min(8, "At least 8 characters"),
-  confirm: z.string().min(8, "Confirm your password"),
-}).refine((vals) => vals.password === vals.confirm, {
-  path: ["confirm"],
-  message: "Passwords do not match",
-});
+const formSchema = z
+  .object({
+    email: z.string().email("Enter a valid email"),
+    password: z.string().min(8, "At least 8 characters"),
+    confirm: z.string().min(8, "Confirm your password"),
+  })
+  .refine((vals) => vals.password === vals.confirm, {
+    path: ["confirm"],
+    message: "Passwords do not match",
+  });
 
 function scorePassword(pwd: string) {
   let score = 0;
@@ -23,7 +26,6 @@ function scorePassword(pwd: string) {
   if (/[a-z]/.test(pwd)) score++;
   if (/\d/.test(pwd)) score++;
   if (/[^A-Za-z0-9]/.test(pwd)) score++;
-  // normalize to 0..4
   return Math.min(4, Math.max(0, score - 1));
 }
 const labels = ["Weak", "Fair", "Good", "Strong", "Very strong"];
@@ -60,11 +62,7 @@ export default function SignUpPage() {
     try {
       const supabase = getSupabaseBrowser();
 
-      // 1) Create the account
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-      });
+      const { data, error } = await supabase.auth.signUp({ email, password });
 
       if (error) {
         if (error.message?.toLowerCase().includes("already registered")) {
@@ -75,13 +73,11 @@ export default function SignUpPage() {
         return;
       }
 
-      // 2) If confirmation is required, send user to a dedicated page
       if (!data.session) {
         router.replace(`/check-email?email=${encodeURIComponent(email)}`);
         return;
       }
 
-      // 3) Otherwise, sync + route by role
       try {
         const res = await fetch("/api/auth/sync", { cache: "no-store" });
         const j = (await res.json()) as { role?: string | null };
@@ -89,11 +85,7 @@ export default function SignUpPage() {
 
         const target =
           nextParam ||
-          (role === "landlord"
-            ? "/landlord"
-            : role === "staff"
-            ? "/admin"
-            : "/tenant");
+          (role === "landlord" ? "/landlord" : role === "staff" ? "/admin" : "/tenant");
 
         router.replace(target);
       } catch {
@@ -151,8 +143,7 @@ export default function SignUpPage() {
                 className="h-2 rounded-full transition-all"
                 style={{
                   width: `${pct}%`,
-                  background:
-                    s <= 1 ? "#f87171" : s === 2 ? "#fbbf24" : s === 3 ? "#34d399" : "#10b981",
+                  background: s <= 1 ? "#f87171" : s === 2 ? "#fbbf24" : s === 3 ? "#34d399" : "#10b981",
                 }}
               />
             </div>
