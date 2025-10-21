@@ -25,6 +25,12 @@ export default async function LandlordHome() {
   if (role !== "LANDLORD") {
     redirect("/not-permitted");
   }
+  <Link
+  href="/landlord/invoices/new"
+  className="inline-flex items-center rounded-md bg-black px-4 py-2 text-white hover:opacity-90"
+>
+  + Create invoice
+</Link>
 
   // Placeholder content (no design changes)
   return (
