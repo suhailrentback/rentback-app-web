@@ -4,15 +4,14 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { getSupabaseBrowser } from "@/lib/supabase";
+// ⬇️ changed: import from client-only module
+import { getSupabaseBrowser } from "@/lib/supabase/client";
 
 export default function CheckEmailPage() {
   const params = useSearchParams();
   const email = params.get("email") || "";
 
-  const [status, setStatus] = useState<"idle" | "resending" | "sent" | "error">(
-    "idle"
-  );
+  const [status, setStatus] = useState<"idle" | "resending" | "sent" | "error">("idle");
   const [message, setMessage] = useState<string | null>(null);
 
   const domainHref = useMemo(() => {
@@ -21,7 +20,7 @@ export default function CheckEmailPage() {
     if (domain.includes("outlook") || domain.includes("hotmail") || domain.includes("live"))
       return "https://outlook.live.com/mail";
     if (domain.includes("yahoo")) return "https://mail.yahoo.com";
-    return "https://www." + domain;
+    return domain ? `https://www.${domain}` : "https://mail.google.com";
   }, [email]);
 
   async function handleResend() {
@@ -30,12 +29,8 @@ export default function CheckEmailPage() {
     setMessage(null);
     try {
       const supabase = getSupabaseBrowser();
-      // Some projects require this capability; if unsupported, we swallow the error gracefully.
       // @ts-expect-error — .resend may not exist in older supabase-js, guarded by try/catch.
-      const { error } = await supabase.auth.resend({
-        type: "signup",
-        email,
-      });
+      const { error } = await supabase.auth.resend({ type: "signup", email });
       if (error) {
         setStatus("error");
         setMessage(error.message || "Could not resend verification email.");
@@ -45,18 +40,13 @@ export default function CheckEmailPage() {
       setMessage("Verification email resent. Check your inbox (and spam).");
     } catch (e: any) {
       setStatus("error");
-      setMessage(
-        e?.message || "Resend not available. Try again in a minute or contact support."
-      );
+      setMessage(e?.message || "Resend not available. Try again shortly.");
     }
   }
 
-  // If no email in query, just keep the page useful
   useEffect(() => {
     if (!email) {
-      setMessage(
-        "We sent a confirmation email to your address. Please check your inbox."
-      );
+      setMessage("We sent a confirmation email to your address. Please check your inbox.");
     }
   }, [email]);
 
@@ -65,15 +55,7 @@ export default function CheckEmailPage() {
       <h1 className="text-2xl font-semibold">Check your email</h1>
       <p className="mt-3 text-gray-700">
         We’ve sent a verification link
-        {email ? (
-          <>
-            {" "}
-            to <span className="font-medium">{email}</span>.
-          </>
-        ) : (
-          ""
-        )}{" "}
-        Click the link in that email to verify your account.
+        {email ? <> to <span className="font-medium">{email}</span></> : null}. Click the link in that email to verify your account.
       </p>
 
       <div className="mt-6 space-y-3">
@@ -110,8 +92,7 @@ export default function CheckEmailPage() {
       ) : null}
 
       <p className="mt-8 text-sm text-gray-600">
-        Already verified?
-        {" "}
+        Already verified?{" "}
         <Link href="/sign-in" className="text-blue-600 hover:underline">
           Sign in
         </Link>
