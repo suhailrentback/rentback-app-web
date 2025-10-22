@@ -1,45 +1,37 @@
-// app/landlord/page.tsx
+"use client";
+
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 
-export default function LandlordDashboard() {
+export default function LandlordHome() {
+  const params = useSearchParams();
+  const created = params.get("created");
+
   return (
-    <main className="max-w-5xl mx-auto px-6 py-10 space-y-8">
-      <header className="space-y-2">
-        <h1 className="text-2xl font-semibold">Landlord</h1>
-        <p className="text-sm text-gray-600">
-          Manage invoices and tenants.
-        </p>
-      </header>
-
-      <section className="grid gap-4 sm:grid-cols-2">
-        <Link
-          href="/landlord/invoices"
-          className="rounded-xl border p-6 hover:bg-gray-50 transition"
-        >
-          <div className="text-lg font-medium">Invoices</div>
-          <p className="text-sm text-gray-600">Review existing invoices.</p>
-          <div className="mt-4 inline-flex items-center text-blue-600 text-sm">
-            Go to list →
-          </div>
-        </Link>
+    <div className="max-w-3xl mx-auto py-8 space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold">Landlord</h1>
+          <p className="text-sm text-gray-600">Issue and manage invoices.</p>
+        </div>
 
         <Link
           href="/landlord/invoices/new"
-          className="rounded-xl border p-6 hover:bg-gray-50 transition"
+          className="rounded-md bg-black text-white px-4 py-2 text-sm"
         >
-          <div className="text-lg font-medium">Create invoice</div>
-          <p className="text-sm text-gray-600">Issue a new invoice to a tenant.</p>
-          <div className="mt-4 inline-flex items-center text-blue-600 text-sm">
-            Start new →
-          </div>
+          Create invoice
         </Link>
-      </section>
+      </div>
 
-      <footer>
-        <Link href="/landlord/invoices" className="text-sm text-blue-600 hover:underline">
-          Or jump straight to invoices →
-        </Link>
-      </footer>
-    </main>
+      {created && (
+        <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+          Invoice created successfully.
+        </div>
+      )}
+
+      <div className="rounded-md border p-6 text-sm text-gray-600">
+        Coming soon: invoice list, filters, search.
+      </div>
+    </div>
   );
 }
