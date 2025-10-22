@@ -164,5 +164,16 @@ export default function NewInvoicePage() {
         </div>
       </form>
     </div>
-  );
+  );]]
+
+  // ...
+if (!res.ok) {
+  const j = await res.json().catch(() => ({}));
+  throw new Error(j?.error || `Request failed (${res.status})`);
+}
+
+// success -> back to landlord with success flag
+router.push("/landlord?created=1");
+router.refresh();
+// ...
 }
