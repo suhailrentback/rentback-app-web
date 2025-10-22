@@ -1,111 +1,168 @@
-// app/landlord/invoices/page.tsx
-import Link from "next/link";
-import { notFound } from "next/navigation";
-import { z } from "zod";
-import { createServerSupabase } from "@/lib/supabase/server";
+"use client";
 
-const Row = z.object({
-  id: z.string(),
-  number: z.string().nullable().optional(),
-  status: z.string().nullable().optional(),
-  total_amount: z.number().nullable().optional(),
-  currency: z.string().nullable().optional(),
-  due_date: z.string().nullable().optional(),
-  issued_at: z.string().nullable().optional(),
-  tenant_id: z.string(),
-});
-type Row = z.infer<typeof Row>;
+import { useRouter } from "next/navigation";
+import { useMemo, useState } from "react";
 
-export default async function LandlordInvoicesPage() {
-  // Server component: safe to use server supabase
-  const supabase = createServerSupabase();
+export default function NewInvoicePage() {
+  const router = useRouter();
+  const [tenantEmail, setTenantEmail] = useState("");
+  const [number, setNumber] = useState("");
+  const [description, setDescription] = useState("");
+  const [totalAmount, setTotalAmount] = useState<string>("");
+  const [currency, setCurrency] = useState("PKR");
+  const [dueDate, setDueDate] = useState<string>("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string>("");
 
-  // NOTE: RLS must permit your role to SELECT; if not, this will just return 0 rows.
-  const { data, error } = await supabase
-    .from("invoices")
-    .select(
-      "id, number, status, total_amount, currency, due_date, issued_at, tenant_id"
-    )
-    .order("issued_at", { ascending: false })
-    .limit(100);
+  const canSubmit = useMemo(() => {
+    if (!tenantEmail.trim()) return false;
+    const amt = Number(totalAmount);
+    if (!Number.isFinite(amt) || amt <= 0) return false;
+    if (!dueDate) return false;
+    return true;
+  }, [tenantEmail, totalAmount, dueDate]);
 
-  if (error) {
-    // Don’t surface details in prod UI; just 404 here
-    notFound();
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!canSubmit) return;
+    setSubmitting(true);
+    setError("");
+
+    try {
+      const payload = {
+        tenant_email: tenantEmail.trim(),
+        number: number.trim() || null,
+        description: description.trim() || null,
+        total_amount: Number(totalAmount),
+        currency: currency.trim() || "PKR",
+        issued_at: new Date().toISOString(),
+        // convert YYYY-MM-DD -> ISO (midnight UTC)
+        due_date: new Date(`${dueDate}T00:00:00Z`).toISOString(),
+      };
+
+      const res = await fetch("/api/landlord/invoices/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.error || `Request failed (${res.status})`);
+      }
+
+      // success -> back to landlord home (can change later)
+      router.push("/landlord");
+      router.refresh();
+    } catch (err: any) {
+      setError(err?.message || "Failed to create invoice");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
-  const parsed =
-    Array.isArray(data) ? z.array(Row).safeParse(data) : { success: true, data: [] as Row[] };
-
-  const rows: Row[] = parsed.success ? parsed.data : [];
-
   return (
-    <main className="max-w-4xl mx-auto px-6 py-10">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold">Invoices</h1>
-        <Link
-          href="/landlord/invoices/new"
-          className="inline-flex items-center rounded-md bg-black text-white px-3 py-2 text-sm hover:opacity-90"
-        >
-          Create invoice
-        </Link>
+    <div className="max-w-2xl mx-auto py-8 space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold">Create Invoice</h1>
+        <p className="text-sm text-gray-600">
+          Issue an invoice to a tenant. Amount is in whole currency (e.g. 25000 PKR).
+        </p>
       </div>
 
-      {rows.length === 0 ? (
-        <div className="rounded-lg border p-6">
-          <h2 className="font-medium mb-1">No invoices yet</h2>
-          <p className="text-sm text-gray-600">
-            When you create an invoice, it’ll show up here with its status and due date.
-          </p>
+      <form onSubmit={onSubmit} className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium">Tenant email</label>
+          <input
+            type="email"
+            required
+            value={tenantEmail}
+            onChange={(e) => setTenantEmail(e.target.value)}
+            className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+            placeholder="tenant@example.com"
+          />
         </div>
-      ) : (
-        <div className="overflow-x-auto rounded-lg border">
-          <table className="min-w-full text-sm">
-            <thead className="bg-gray-50 text-left">
-              <tr>
-                <th className="px-4 py-3">Invoice #</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Total</th>
-                <th className="px-4 py-3">Due</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((inv) => {
-                const total =
-                  typeof inv.total_amount === "number"
-                    ? `${inv.total_amount} ${inv.currency ?? ""}`.trim()
-                    : "—";
-                const due = inv.due_date ? new Date(inv.due_date).toDateString() : "—";
-                const number = inv.number ?? inv.id.slice(0, 8).toUpperCase();
 
-                return (
-                  <tr key={inv.id} className="border-t hover:bg-gray-50">
-                    <td className="px-4 py-3">
-                      <Link
-                        href={`/landlord/invoices/${inv.id}`}
-                        className="text-blue-600 hover:underline"
-                      >
-                        {number}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-3 uppercase tracking-wide">
-                      {(inv.status ?? "").toString()}
-                    </td>
-                    <td className="px-4 py-3">{total}</td>
-                    <td className="px-4 py-3">{due}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="sm:col-span-2">
+            <label className="block text-sm font-medium">Amount</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              required
+              value={totalAmount}
+              onChange={(e) => setTotalAmount(e.target.value)}
+              className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+              placeholder="25000"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium">Currency</label>
+            <input
+              type="text"
+              maxLength={3}
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value.toUpperCase())}
+              className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+              placeholder="PKR"
+            />
+          </div>
         </div>
-      )}
 
-      <div className="mt-6">
-        <Link href="/landlord" className="text-sm text-blue-600 hover:underline">
-          ← Back to landlord home
-        </Link>
-      </div>
-    </main>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm font-medium">Due date</label>
+            <input
+              type="date"
+              required
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+              className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium">Invoice # (optional)</label>
+            <input
+              type="text"
+              value={number}
+              onChange={(e) => setNumber(e.target.value)}
+              className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+              placeholder="INV-2025-001"
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium">Description (optional)</label>
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={3}
+            className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+            placeholder="October rent"
+          />
+        </div>
+
+        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+
+        <div className="flex items-center gap-3">
+          <button
+            type="submit"
+            disabled={!canSubmit || submitting}
+            className="rounded-md bg-black text-white px-4 py-2 text-sm disabled:opacity-50"
+          >
+            {submitting ? "Creating…" : "Create invoice"}
+          </button>
+          <button
+            type="button"
+            onClick={() => history.back()}
+            className="rounded-md border px-4 py-2 text-sm"
+          >
+            Cancel
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
