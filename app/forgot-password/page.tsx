@@ -1,44 +1,87 @@
-'use client';
+// app/forgot-password/page.tsx
+"use client";
 
-import { useState } from 'react';
-import { getSupabaseBrowser } from '@/lib/supabase/client';
-import AuthHeader from '@/components/AuthHeader';
-import AuthFooter from '@/components/AuthFooter';
+import React, { useState } from "react";
+import { getSupabaseBrowser } from "@/lib/supabase";
 
 export default function ForgotPasswordPage() {
-  const supabase = getSupabaseBrowser();
-  const [email, setEmail] = useState('');
-  const [msg, setMsg] = useState<string | null>(null);
+  const [email, setEmail] = useState("");
+  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">(
+    "idle"
+  );
   const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true); setErr(null); setMsg(null);
-    const redirectTo = `${window.location.origin}/reset-password`;
-    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
-    setLoading(false);
-    if (error) { setErr(error.message); return; }
-    setMsg('If that email exists, a reset link is on its way.');
+    setStatus("sending");
+    setErr(null);
+    try {
+      const supabase = getSupabaseBrowser();
+      const redirectTo = `${window.location.origin}/reset-password`;
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo,
+      });
+      if (error) {
+        setErr(error.message);
+        setStatus("error");
+        return;
+      }
+      setStatus("sent");
+    } catch (e: any) {
+      setErr(e?.message ?? "Something went wrong.");
+      setStatus("error");
+    }
   }
 
   return (
-    <div className="relative min-h-[100svh] bg-white text-gray-900 flex flex-col">
-      <div aria-hidden className="pointer-events-none absolute inset-x-0 -top-40 z-0 h-80 bg-gradient-to-b from-emerald-200/60 via-emerald-100/40 to-transparent blur-2xl" />
-      <AuthHeader />
-      <main className="relative z-10 mx-auto w-full max-w-md grow px-6 py-10">
-        <h1 className="text-3xl font-bold tracking-tight">Reset your password</h1>
-        <form onSubmit={onSubmit} className="mt-6 space-y-4">
-          <input value={email} onChange={e=>setEmail(e.target.value)} type="email" required
-            placeholder="you@example.com" className="w-full rounded-lg border px-4 py-2" />
-          <button disabled={loading} className="w-full rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700">
-            {loading ? 'Sending…' : 'Send reset link'}
-          </button>
-        </form>
-        {msg && <p className="mt-4 text-sm text-emerald-700">{msg}</p>}
-        {err && <p className="mt-4 text-sm text-red-600">{err}</p>}
-      </main>
-      <AuthFooter />
+    <div className="mx-auto max-w-md px-4 py-12">
+      <h1 className="text-2xl font-semibold">Forgot password</h1>
+      <p className="mt-2 text-sm text-gray-600">
+        Enter your email and we’ll send a reset link.
+      </p>
+
+      <form onSubmit={onSubmit} className="mt-6 space-y-4">
+        <div>
+          <label className="block text-sm mb-1">Email</label>
+          <input
+            type="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="w-full rounded-lg border px-3 py-2"
+            placeholder="you@example.com"
+            autoComplete="email"
+          />
+        </div>
+
+        {err ? (
+          <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {err}
+          </div>
+        ) : null}
+
+        <button
+          type="submit"
+          disabled={status === "sending"}
+          className="w-full rounded-xl border px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
+        >
+          {status === "sending" ? "Sending…" : "Send reset link"}
+        </button>
+      </form>
+
+      {status === "sent" ? (
+        <div className="mt-4 rounded-lg border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-800">
+          Check your email for the reset link. It will open a page here to set a new password.
+        </div>
+      ) : null}
+
+      <div className="mt-4 text-sm">
+        Remembered it?{" "}
+        <a href="/sign-in" className="underline">
+          Back to sign in
+        </a>
+        .
+      </div>
     </div>
   );
 }
