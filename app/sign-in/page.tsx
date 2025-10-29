@@ -31,14 +31,14 @@ export default function SignInPage() {
         return;
       }
 
-      // Ensure rb_role cookie is in sync, then route by role
+      // Ensure role cookie is in sync, then route by role
       const res = await fetch("/api/auth/sync", { cache: "no-store" });
       let role = "tenant";
       try {
         const j = await res.json();
         if (j && typeof j.role === "string") role = j.role as string;
       } catch {
-        // ignore parsing errors, default to tenant
+        // ignore
       }
 
       const fallback =
@@ -54,9 +54,7 @@ export default function SignInPage() {
   return (
     <div className="mx-auto max-w-md px-4 py-12">
       <h1 className="text-2xl font-semibold">Sign in</h1>
-      <p className="mt-2 text-sm text-gray-600">
-        Access your RentBack dashboard.
-      </p>
+      <p className="mt-2 text-sm text-gray-600">Access your RentBack dashboard.</p>
 
       <form onSubmit={onSubmit} className="mt-6 space-y-4">
         <div>
@@ -83,6 +81,11 @@ export default function SignInPage() {
             placeholder="Your password"
             autoComplete="current-password"
           />
+          <div className="mt-2 text-xs">
+            <a href="/forgot-password" className="underline">
+              Forgot password?
+            </a>
+          </div>
         </div>
 
         {err ? (
@@ -100,7 +103,6 @@ export default function SignInPage() {
         </button>
       </form>
 
-      {/* Clear, visible path to sign up */}
       <div className="mt-4 text-sm">
         Don’t have an account?{" "}
         <a href="/sign-up" className="underline">
