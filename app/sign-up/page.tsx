@@ -1,122 +1,114 @@
-'use client';
+// app/sign-up/page.tsx
+"use client";
 
-import * as React from 'react';
-import { useRouter } from 'next/navigation';
-import { getSupabaseBrowser } from '@/lib/supabase/client';
+import React, { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { getSupabaseBrowser } from "@/lib/supabase";
 
 export default function SignUpPage() {
   const router = useRouter();
-  const [email, setEmail] = React.useState('');
-  const [password, setPassword] = React.useState('');
-  const [confirm, setConfirm] = React.useState('');
-  const [error, setError] = React.useState<string | null>(null);
-  const [status, setStatus] = React.useState<'idle'|'submitting'|'success'>('idle');
+  const sp = useSearchParams();
+  const next = sp.get("next") || "";
 
-  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+  const [email, setEmail] = useState("");
+  const [pw, setPw] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setError(null);
-
-    const trimmedEmail = email.trim().toLowerCase();
-    if (!trimmedEmail) return setError('Email is required.');
-    if (!password) return setError('Password is required.');
-    if (password !== confirm) return setError('Passwords do not match.');
-
-    setStatus('submitting');
+    setErr(null);
+    setLoading(true);
 
     try {
       const supabase = getSupabaseBrowser();
-      const redirectTo = `${window.location.origin}/auth/callback`;
+      const redirectTo = `${window.location.origin}/auth/callback${
+        next ? `?next=${encodeURIComponent(next)}` : ""
+      }`;
 
-      const { error: signUpError } = await supabase.auth.signUp({
-        email: trimmedEmail,
-        password,
-        options: { emailRedirectTo: redirectTo },
+      const { error } = await supabase.auth.signUp({
+        email,
+        password: pw,
+        options: {
+          emailRedirectTo: redirectTo,
+        },
       });
 
-      if (signUpError) {
-        // Common code: 'user_already_exists'
-        setStatus('idle');
-        return setError(signUpError.message || 'Could not sign up.');
+      if (error) {
+        setErr(error.message);
+        setLoading(false);
+        return;
       }
 
-      setStatus('success');
-      // If email confirmations are on, send them to the “Check your email” page.
-      router.replace(`/check-email?email=${encodeURIComponent(trimmedEmail)}`);
-    } catch (err: any) {
-      console.error(err);
-      setStatus('idle');
-      setError('Unexpected error. Please try again.');
+      // Send user to “Check your email” helper page
+      router.replace(`/check-email?email=${encodeURIComponent(email)}`);
+    } catch (e: any) {
+      setErr(e?.message ?? "Something went wrong creating your account.");
+      setLoading(false);
     }
   }
 
   return (
-    <div className="mx-auto max-w-md px-6 py-10">
+    <div className="mx-auto max-w-md px-4 py-12">
       <h1 className="text-2xl font-semibold">Create your account</h1>
       <p className="mt-2 text-sm text-gray-600">
-        Use your email and a password to get started.
+        Sign up to access your RentBack dashboard.
       </p>
 
       <form onSubmit={onSubmit} className="mt-6 space-y-4">
         <div>
-          <label className="block text-sm font-medium mb-1">Email</label>
+          <label className="block text-sm mb-1">Email</label>
           <input
             type="email"
-            inputMode="email"
-            autoComplete="email"
-            className="w-full rounded-lg border px-3 py-2"
-            placeholder="you@example.com"
+            required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            required
+            className="w-full rounded-lg border px-3 py-2"
+            placeholder="you@example.com"
+            autoComplete="email"
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium mb-1">Password</label>
+          <label className="block text-sm mb-1">Password</label>
           <input
             type="password"
-            autoComplete="new-password"
-            className="w-full rounded-lg border px-3 py-2"
-            placeholder="••••••••"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            minLength={6}
             required
+            value={pw}
+            onChange={(e) => setPw(e.target.value)}
+            className="w-full rounded-lg border px-3 py-2"
+            placeholder="At least 8 characters"
+            autoComplete="new-password"
           />
+          <div className="mt-2 text-xs">
+            <a href="/forgot-password" className="underline">
+              Forgot password?
+            </a>
+          </div>
         </div>
 
-        <div>
-          <label className="block text-sm font-medium mb-1">Confirm password</label>
-          <input
-            type="password"
-            autoComplete="new-password"
-            className="w-full rounded-lg border px-3 py-2"
-            placeholder="••••••••"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            minLength={6}
-            required
-          />
-        </div>
-
-        {error ? (
-          <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
-            {error}
+        {err ? (
+          <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {err}
           </div>
         ) : null}
 
         <button
           type="submit"
-          disabled={status === 'submitting'}
-          className="w-full rounded-lg bg-black text-white px-4 py-2 disabled:opacity-70"
+          disabled={loading}
+          className="w-full rounded-xl border px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
         >
-          {status === 'submitting' ? 'Creating…' : 'Create account'}
+          {loading ? "Creating account…" : "Sign up"}
         </button>
-
-        <p className="text-xs text-gray-500">
-          By continuing you agree to our standard terms.
-        </p>
       </form>
+
+      <div className="mt-4 text-sm">
+        Already have an account?{" "}
+        <a href={`/sign-in${next ? `?next=${encodeURIComponent(next)}` : ""}`} className="underline">
+          Sign in
+        </a>
+        .
+      </div>
     </div>
   );
 }
