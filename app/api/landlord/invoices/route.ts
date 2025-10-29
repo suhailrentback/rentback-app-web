@@ -1,95 +1,113 @@
+// app/api/landlord/invoices/route.ts
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createRouteSupabase } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
-// Accepts both JSON and FormData; coerces numbers/dates safely
-const Body = z.object({
-  tenantEmail: z.string().email(),
+const CreateInvoice = z.object({
+  tenantEmail: z.string().email("Enter a valid tenant email"),
   amount: z
-    .union([z.string(), z.number()])
-    .transform((v) => (typeof v === "string" ? parseFloat(v.replace(/,/g, "")) : v))
-    .refine((v) => Number.isFinite(v) && v > 0, "Amount must be > 0"),
-  currency: z.string().min(1).max(8).default("PKR"),
-  description: z.string().max(500).optional().default(""),
+    .coerce
+    .number({ invalid_type_error: "Amount must be a number" })
+    .positive("Amount must be greater than 0"),
+  currency: z
+    .string()
+    .trim()
+    .min(3, "Currency must be a 3-letter code")
+    .max(3, "Currency must be a 3-letter code")
+    .transform((s) => s.toUpperCase()),
   dueDate: z
-    .union([z.string(), z.date()])
-    .transform((v) => {
-      const d = typeof v === "string" ? new Date(v) : v;
-      return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-    })
-    .refine((d) => !Number.isNaN(d.getTime()), "Invalid date"),
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD for due date"),
+  description: z
+    .string()
+    .trim()
+    .min(1, "Description is required")
+    .max(280, "Description is too long"),
 });
 
-async function parseBody(req: Request) {
-  const ct = req.headers.get("content-type") || "";
-  if (ct.includes("application/json")) {
-    return await req.json();
-  }
-  // Handle application/x-www-form-urlencoded or multipart/form-data
-  const fd = await req.formData();
-  return {
-    tenantEmail: (fd.get("tenantEmail") ?? "").toString(),
-    amount: (fd.get("amount") ?? "").toString(),
-    currency: (fd.get("currency") ?? "PKR").toString(),
-    description: (fd.get("description") ?? "").toString(),
-    dueDate: (fd.get("dueDate") ?? "").toString(),
-  };
+function jsonError(
+  message: string,
+  status = 400,
+  extra?: Record<string, unknown>
+) {
+  return NextResponse.json({ error: message, ...extra }, { status });
 }
 
 export async function POST(req: Request) {
+  // 1) Parse/validate JSON
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return jsonError("Invalid JSON body", 400);
+  }
+
+  const parsed = CreateInvoice.safeParse(body);
+  if (!parsed.success) {
+    const { fieldErrors, formErrors } = parsed.error.flatten();
+    return jsonError("Invalid payload", 400, { fieldErrors, formErrors });
+  }
+
+  const { tenantEmail, amount, currency, dueDate, description } = parsed.data;
+
+  // 2) Supabase (with RLS as the signed-in landlord/staff)
   const supabase = createRouteSupabase();
 
-  // 1) Parse + validate
-  const raw = await parseBody(req);
-  const parsed = Body.safeParse(raw);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid payload", issues: parsed.error.flatten().fieldErrors },
-      { status: 400 }
-    );
-  }
-  const { tenantEmail, amount, currency, description, dueDate } = parsed.data;
+  // Optional: ensure caller is staff/admin (you already enforce with RLS, this is just a friendly check)
+  // If you have an rb_role cookie / session you can call /api/auth/sync on client before posting.
+  // Here we rely on DB RLS for the true enforcement.
 
-  // 2) Resolve tenant by email (profiles.email)
-  const { data: profile, error: pErr } = await supabase
+  // 3) Resolve tenant by email
+  const { data: tenant, error: tenantErr } = await supabase
     .from("profiles")
-    .select("id, role, email")
+    .select("id, email")
     .eq("email", tenantEmail)
     .maybeSingle();
 
-  if (pErr) {
-    return NextResponse.json({ error: pErr.message }, { status: 400 });
+  if (tenantErr) {
+    return jsonError("Lookup failed for tenant", 500, { detail: tenantErr.message });
   }
-  if (!profile?.id) {
-    return NextResponse.json({ error: "Tenant email not found" }, { status: 404 });
+  if (!tenant) {
+    return jsonError("Tenant not found for that email", 404);
   }
 
-  // 3) Prepare amounts/dates
-  const amount_cents = Math.round(amount * 100);
-  // If your column is DATE, sending an ISO date string "YYYY-MM-DD" is safe:
-  const due_date_sql = dueDate.toISOString().slice(0, 10);
+  // 4) Prepare insert
+  const amountCents = Math.round(amount * 100);
+  const number =
+    "INV-" + String(Math.floor(Math.random() * 1_000_000)).padStart(6, "0");
 
-  // 4) Insert invoice (status: 'issued' satisfies our CHECK constraint)
-  const { data: inv, error: iErr } = await supabase
+  // Use a safe initial status your CHECK allows, e.g. 'open' or 'issued'
+  const invoiceRow = {
+    tenant_id: tenant.id,
+    status: "open" as const,
+    issued_at: new Date().toISOString(),
+    due_date: dueDate, // 'YYYY-MM-DD' is fine for a date/timestamptz column
+    amount_cents: amountCents,
+    total_amount: amount,
+    currency,
+    description,
+    number,
+  };
+
+  const { data: created, error: insertErr } = await supabase
     .from("invoices")
-    .insert({
-      tenant_id: profile.id,
-      status: "issued",
-      issued_at: new Date().toISOString(),
-      due_date: due_date_sql,
-      amount_cents,
-      total_amount: amount,
-      currency,
-      description,
-    })
+    .insert(invoiceRow)
     .select("id, number")
-    .single();
+    .maybeSingle();
 
-  if (iErr) {
-    return NextResponse.json({ error: iErr.message }, { status: 400 });
+  if (insertErr) {
+    return jsonError("Insert failed", 500, { detail: insertErr.message });
   }
 
-  return NextResponse.json({ ok: true, id: inv.id, number: inv.number ?? null });
+  return NextResponse.json(
+    {
+      ok: true,
+      id: created?.id,
+      number: created?.number,
+      message: "Invoice created",
+    },
+    { status: 201 }
+  );
 }
