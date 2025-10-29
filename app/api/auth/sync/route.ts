@@ -1,48 +1,58 @@
-// app/api/auth/sync/route.ts
-import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createRouteSupabase } from '@/lib/supabase/server';
+import { NextResponse } from "next/server";
+import { createRouteSupabase } from "@/lib/supabase/server";
 
-export const runtime = 'nodejs'; // SSR libs expect Node here
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
-/** Ensures profile row & role value exist; sets rb_role cookie; returns { role } */
+/**
+ * Reads the signed-in user, fetches their profile.role, and sets rb_role cookie.
+ * Staff > Landlord > Tenant precedence. Hard override for suhail@rentback.app (for testing).
+ */
 export async function GET() {
-  const cookieStore = cookies();
   const supabase = createRouteSupabase();
 
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) return NextResponse.json({ role: null }, { status: 401 });
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
 
-  // Read role if present
-  let role = cookieStore.get('rb_role')?.value ?? null;
-
-  // Ensure a profile exists & has a role; default => tenant
-  if (!role) {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', session.user.id)
-      .single();
-
-    role = profile?.role ?? 'tenant';
-
-    // Attempt to upsert (ok if RLS allows insert-on-missing for owner)
-    await supabase
-      .from('profiles')
-      .upsert({ id: session.user.id, role })
-      .select('role')
-      .single();
+  // Not signed in
+  if (userError || !user) {
+    const res = NextResponse.json({ role: "unknown" }, { status: 200 });
+    res.cookies.set("rb_role", "unknown", {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 60 * 60 * 24 * 7,
+    });
+    return res;
   }
 
-  const res = NextResponse.json({ role });
-  res.cookies.set({
-    name: 'rb_role',
-    value: role,
-    path: '/',
-    sameSite: 'lax',
+  // Base role from profile (default tenant)
+  let role: "tenant" | "landlord" | "staff" = "tenant";
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (profile?.role === "staff") role = "staff";
+  else if (profile?.role === "landlord") role = "landlord";
+  else role = "tenant";
+
+  // ✅ Hard override so you have full access during testing
+  if (user.email?.toLowerCase() === "suhail@rentback.app") {
+    role = "staff";
+  }
+
+  const res = NextResponse.json({ role }, { status: 200 });
+  res.cookies.set("rb_role", role, {
     httpOnly: true,
-    secure: true,
-    maxAge: 60 * 60 * 24 * 30,
+    sameSite: "lax",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 7,
   });
   return res;
 }
