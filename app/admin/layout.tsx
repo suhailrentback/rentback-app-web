@@ -1,9 +1,18 @@
 // app/admin/layout.tsx
-import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
+import React from "react";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  const role = cookies().get("rb_role")?.value;
-  if (role !== "staff") redirect("/not-permitted");
-  return <>{children}</>;
+  return (
+    <div className="min-h-screen">
+      <div className="fixed top-3 right-3 z-50">
+        <a
+          href="/sign-out"
+          className="rounded-xl border px-3 py-1 text-sm hover:bg-gray-50 dark:hover:bg-gray-800"
+        >
+          Sign out
+        </a>
+      </div>
+      {children}
+    </div>
+  );
 }
