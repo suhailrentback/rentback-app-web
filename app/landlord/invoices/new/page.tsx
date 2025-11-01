@@ -3,6 +3,34 @@
 import { useState } from "react";
 import Link from "next/link";
 
+type ApiError = {
+  error?: string;
+  detail?: string;
+  issues?: Array<{ path?: string[]; message?: string }>;
+};
+
+function friendlyMessage(json: ApiError): string {
+  const raw = (json.detail || json.error || "").toLowerCase();
+
+  if (/duplicate key value/i.test(raw) && /invoices.*number/i.test(raw)) {
+    return "Invoice number already exists. Pick a different number.";
+  }
+  if (/row level security/i.test(raw)) {
+    return "Insert blocked by RLS. Run the policies SQL I provided.";
+  }
+  if (/invalid input syntax/i.test(raw) && /uuid/i.test(raw)) {
+    return "Invalid tenant id/email mapping. Make sure the tenant email exists and is verified.";
+  }
+  if (json.error === "tenant_not_found") {
+    return "Tenant not found for that email.";
+  }
+  if (json.error === "invalid_payload") {
+    const first = json.issues?.[0]?.message;
+    return first ? `Invalid field: ${first}` : "Invalid payload — please check fields.";
+  }
+  return json.detail || json.error || "Failed to create invoice.";
+}
+
 export default function CreateInvoicePage() {
   const [tenantEmail, setTenantEmail] = useState("");
   const [number, setNumber] = useState("");
@@ -11,9 +39,7 @@ export default function CreateInvoicePage() {
   const [totalAmount, setTotalAmount] = useState<string>("");
   const [dueDate, setDueDate] = useState<string>("");
 
-  const [status, setStatus] = useState<"idle" | "submitting" | "ok" | "error">(
-    "idle"
-  );
+  const [status, setStatus] = useState<"idle" | "submitting" | "ok" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState<string>("");
 
   async function onSubmit(e: React.FormEvent) {
@@ -25,7 +51,6 @@ export default function CreateInvoicePage() {
       const res = await fetch("/api/landlord/invoices", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // IMPORTANT: JSON keys match server schema
         body: JSON.stringify({
           tenantEmail,
           number,
@@ -36,22 +61,18 @@ export default function CreateInvoicePage() {
         }),
       });
 
-      const json = await res.json().catch(() => ({}));
+      const json: ApiError = await res.json().catch(() => ({}));
 
       if (!res.ok) {
         setStatus("error");
-        setErrorMsg(
-          json?.error === "invalid_payload"
-            ? "Invalid payload — please check fields."
-            : json?.error || "Failed to create invoice."
-        );
+        setErrorMsg(friendlyMessage(json));
         return;
       }
 
       setStatus("ok");
-      // Optional: redirect or link to landlord invoices list
-      // window.location.href = "/landlord"; // if you want immediate nav
-    } catch (err: any) {
+      // Optional: redirect
+      // window.location.href = "/landlord";
+    } catch {
       setStatus("error");
       setErrorMsg("Network error. Please try again.");
     }
@@ -66,14 +87,12 @@ export default function CreateInvoicePage() {
       </div>
 
       <h1 className="text-xl font-semibold">Create Invoice</h1>
-      <p className="mb-6 text-sm text-gray-600">
-        Issue an invoice to a tenant by email.
-      </p>
+      <p className="mb-6 text-sm text-gray-600">Issue an invoice to a tenant by email.</p>
 
       {status === "ok" ? (
         <div className="rounded-xl border p-4 text-sm">
           <div className="mb-2 font-medium">Created ✅</div>
-          <div>You can issue another invoice or go back to dashboard.</div>
+          <div>You can issue another invoice or go back to the dashboard.</div>
           <div className="mt-4 flex gap-3">
             <button
               onClick={() => {
