@@ -7,7 +7,6 @@ export const runtime = "nodejs";
 
 const PageSize = 10;
 
-// Parse and coerce search params safely (so we avoid TS/edge errors)
 const SearchSchema = z.object({
   q: z.string().trim().max(100).optional(),
   status: z
@@ -72,27 +71,21 @@ export default async function TenantInvoicesPage({
   searchParams?: Record<string, string | string[] | undefined>;
 }) {
   const parsed = SearchSchema.safeParse(searchParams ?? {});
-  const sp = parsed.success ? parsed.data : SearchSchema.parse({}); // fallback to defaults
+  const sp = parsed.success ? parsed.data : SearchSchema.parse({});
 
   const supabase = createServerSupabase();
 
-  // Build the base query (RLS will scope to current tenant automatically)
   let query = supabase
     .from("invoices")
     .select("id, number, status, total_amount, currency, issued_at, due_date, description", {
       count: "exact",
     });
 
-  // Text search against invoice number or description (ILIKE)
   if (sp.q && sp.q.length > 0) {
-    // Use or() with ilike on both fields
-    // NOTE: needs PostgREST filter syntax
     query = query.or(`number.ilike.%${sp.q}%,description.ilike.%${sp.q}%`);
   }
 
-  // Status filter (multiple)
   if (sp.status.length > 0) {
-    // Normalize allowed statuses (defensive, won’t throw)
     const allowed = new Set(["open", "issued", "paid", "overdue"]);
     const wanted = sp.status
       .map((s) => String(s).toLowerCase())
@@ -102,20 +95,16 @@ export default async function TenantInvoicesPage({
     }
   }
 
-  // Amount range
   if (sp.min_amount !== undefined) query = query.gte("total_amount", sp.min_amount);
   if (sp.max_amount !== undefined) query = query.lte("total_amount", sp.max_amount);
 
-  // Date ranges
   if (sp.issued_from) query = query.gte("issued_at", sp.issued_from);
   if (sp.issued_to) query = query.lte("issued_at", sp.issued_to);
   if (sp.due_from) query = query.gte("due_date", sp.due_from);
   if (sp.due_to) query = query.lte("due_date", sp.due_to);
 
-  // Sorting
   query = query.order(sp.sort, { ascending: sp.dir === "asc" });
 
-  // Pagination
   const page = sp.page ?? 1;
   const from = (page - 1) * PageSize;
   const to = from + PageSize - 1;
@@ -126,23 +115,31 @@ export default async function TenantInvoicesPage({
   const total = count ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PageSize));
 
-  // Keep current query for link preservation
   const currentQS = new URLSearchParams();
   for (const [k, v] of Object.entries(searchParams ?? {})) {
     if (Array.isArray(v)) v.forEach((vv) => currentQS.append(k, String(vv)));
     else if (v !== undefined) currentQS.set(k, String(v));
   }
+  const exportHref = `/api/tenant/invoices/export?${currentQS.toString()}`;
 
   return (
     <div className="mx-auto max-w-3xl p-6">
-      <div className="mb-6">
-        <h1 className="text-xl font-semibold">Invoices</h1>
-        <p className="text-sm text-gray-500">
-          Transparent amounts, clear status, quick receipts (when paid).
-        </p>
+      <div className="mb-3 flex items-start justify-between">
+        <div>
+          <h1 className="text-xl font-semibold">Invoices</h1>
+          <p className="text-sm text-gray-500">
+            Transparent amounts, clear status, quick receipts (when paid).
+          </p>
+        </div>
+        <Link
+          href={exportHref}
+          className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
+        >
+          Export CSV
+        </Link>
       </div>
 
-      {/* Filters (GET form, no client JS) */}
+      {/* Filters */}
       <form method="GET" className="mb-4 grid grid-cols-1 gap-3 rounded-xl border p-4 md:grid-cols-2">
         <div className="flex flex-col gap-1">
           <label className="text-xs text-gray-600">Search</label>
@@ -219,7 +216,6 @@ export default async function TenantInvoicesPage({
           </div>
         </div>
 
-        {/* Preserve page reset to 1 on submit */}
         <input type="hidden" name="page" value="1" />
 
         <div className="flex items-end gap-2">
@@ -232,7 +228,6 @@ export default async function TenantInvoicesPage({
         </div>
       </form>
 
-      {/* Results */}
       {error ? (
         <div className="rounded-xl border border-red-300 bg-red-50 p-4 text-sm text-red-700">
           Failed to load invoices. Try again.
@@ -267,9 +262,7 @@ export default async function TenantInvoicesPage({
                       <span
                         className={
                           "rounded-full px-2 py-1 text-xs " +
-                          (isPaid
-                            ? "bg-green-100 text-green-700"
-                            : "bg-amber-100 text-amber-700")
+                          (isPaid ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700")
                         }
                       >
                         {(inv.status ?? "").toUpperCase() || "—"}
@@ -284,10 +277,7 @@ export default async function TenantInvoicesPage({
                       {inv.due_date ? new Date(inv.due_date).toDateString() : "—"}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <Link
-                        href={rowLink}
-                        className="rounded-xl border px-2 py-1 hover:bg-gray-50"
-                      >
+                      <Link href={rowLink} className="rounded-xl border px-2 py-1 hover:bg-gray-50">
                         View
                       </Link>
                     </td>
@@ -299,7 +289,6 @@ export default async function TenantInvoicesPage({
         </div>
       )}
 
-      {/* Pager (preserve active filters/sort) */}
       <div className="mt-4 flex items-center justify-between text-sm">
         <div className="text-gray-600">
           Page {page} of {totalPages} · {total} total
