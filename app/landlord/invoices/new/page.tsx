@@ -1,210 +1,194 @@
-// app/landlord/invoices/new/page.tsx
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 
-type FieldErrors = Partial<Record<
-  "tenantEmail" | "amount" | "currency" | "dueDate" | "description",
-  string[]
->>;
-
-export default function NewInvoicePage() {
-  const router = useRouter();
+export default function CreateInvoicePage() {
   const [tenantEmail, setTenantEmail] = useState("");
-  const [amount, setAmount] = useState<string>("");
-  const [currency, setCurrency] = useState("PKR");
-  const [dueDate, setDueDate] = useState("");
+  const [number, setNumber] = useState("");
   const [description, setDescription] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const [currency, setCurrency] = useState("PKR");
+  const [totalAmount, setTotalAmount] = useState<string>("");
+  const [dueDate, setDueDate] = useState<string>("");
 
-  const [formError, setFormError] = useState<string | null>(null);
-  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [status, setStatus] = useState<"idle" | "submitting" | "ok" | "error">(
+    "idle"
+  );
+  const [errorMsg, setErrorMsg] = useState<string>("");
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setSubmitting(true);
-    setFormError(null);
-    setFieldErrors({});
+    setStatus("submitting");
+    setErrorMsg("");
 
     try {
       const res = await fetch("/api/landlord/invoices", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        // IMPORTANT: JSON keys match server schema
         body: JSON.stringify({
           tenantEmail,
-          amount,       // server coerces to number
-          currency,     // server uppercases & validates 3-letter
-          dueDate,      // must be YYYY-MM-DD
+          number,
           description,
+          currency,
+          total_amount: totalAmount, // server coerces to number
+          due_date: dueDate,        // YYYY-MM-DD
         }),
       });
 
-      const json = await res.json().catch(() => ({} as any));
+      const json = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        // Show field-level validation errors when available
-        if (json?.fieldErrors) setFieldErrors(json.fieldErrors);
-        setFormError(json?.error || "Something went wrong");
-        setSubmitting(false);
+        setStatus("error");
+        setErrorMsg(
+          json?.error === "invalid_payload"
+            ? "Invalid payload — please check fields."
+            : json?.error || "Failed to create invoice."
+        );
         return;
       }
 
-      // Success → go back to landlord invoices list
-      router.push("/landlord/invoices");
-    } catch (err) {
-      setFormError("Network error. Please try again.");
-      setSubmitting(false);
+      setStatus("ok");
+      // Optional: redirect or link to landlord invoices list
+      // window.location.href = "/landlord"; // if you want immediate nav
+    } catch (err: any) {
+      setStatus("error");
+      setErrorMsg("Network error. Please try again.");
     }
   }
 
   return (
     <div className="mx-auto max-w-xl p-6">
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Create Invoice</h1>
-        <a
-          href="/landlord/invoices"
-          className="text-sm underline hover:opacity-80"
-        >
-          Back to invoices
-        </a>
+      <div className="mb-4">
+        <Link href="/landlord" className="text-sm underline">
+          ← Back to landlord dashboard
+        </Link>
       </div>
 
-      {formError && (
-        <div className="mb-4 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800">
-          {formError}
+      <h1 className="text-xl font-semibold">Create Invoice</h1>
+      <p className="mb-6 text-sm text-gray-600">
+        Issue an invoice to a tenant by email.
+      </p>
+
+      {status === "ok" ? (
+        <div className="rounded-xl border p-4 text-sm">
+          <div className="mb-2 font-medium">Created ✅</div>
+          <div>You can issue another invoice or go back to dashboard.</div>
+          <div className="mt-4 flex gap-3">
+            <button
+              onClick={() => {
+                setTenantEmail("");
+                setNumber("");
+                setDescription("");
+                setCurrency("PKR");
+                setTotalAmount("");
+                setDueDate("");
+                setStatus("idle");
+                setErrorMsg("");
+              }}
+              className="rounded-xl border px-3 py-2 text-sm"
+            >
+              Create another
+            </button>
+            <Link href="/landlord" className="rounded-xl border px-3 py-2 text-sm">
+              Go to dashboard
+            </Link>
+          </div>
         </div>
+      ) : (
+        <form onSubmit={onSubmit} className="space-y-4">
+          {status === "error" && (
+            <div className="rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+              {errorMsg || "Something went wrong."}
+            </div>
+          )}
+
+          <div>
+            <label className="mb-1 block text-sm">Tenant email</label>
+            <input
+              type="email"
+              required
+              value={tenantEmail}
+              onChange={(e) => setTenantEmail(e.target.value)}
+              className="w-full rounded-xl border px-3 py-2 text-sm"
+              placeholder="suhail@rentback.app"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm">Invoice number</label>
+            <input
+              type="text"
+              required
+              value={number}
+              onChange={(e) => setNumber(e.target.value)}
+              className="w-full rounded-xl border px-3 py-2 text-sm"
+              placeholder="INV-2025-001"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm">Description</label>
+            <input
+              type="text"
+              required
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="w-full rounded-xl border px-3 py-2 text-sm"
+              placeholder="November rent"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="mb-1 block text-sm">Currency (3-letter)</label>
+              <input
+                type="text"
+                required
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value)}
+                className="w-full rounded-xl border px-3 py-2 text-sm"
+                placeholder="PKR"
+                maxLength={3}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm">Amount (e.g., 25000)</label>
+              <input
+                type="number"
+                inputMode="decimal"
+                required
+                value={totalAmount}
+                onChange={(e) => setTotalAmount(e.target.value)}
+                className="w-full rounded-xl border px-3 py-2 text-sm"
+                placeholder="25000"
+                min="1"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm">Due date</label>
+            <input
+              type="date"
+              required
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+              className="w-full rounded-xl border px-3 py-2 text-sm"
+            />
+          </div>
+
+          <div className="pt-2">
+            <button
+              type="submit"
+              disabled={status === "submitting"}
+              className="w-full rounded-xl border px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
+            >
+              {status === "submitting" ? "Creating…" : "Create invoice"}
+            </button>
+          </div>
+        </form>
       )}
-
-      <form onSubmit={onSubmit} className="space-y-4">
-        {/* Tenant email */}
-        <div>
-          <label className="mb-1 block text-sm font-medium">Tenant email</label>
-          <input
-            type="email"
-            inputMode="email"
-            required
-            value={tenantEmail}
-            onChange={(e) => setTenantEmail(e.target.value)}
-            className="w-full rounded-xl border px-3 py-2 text-sm"
-            placeholder="suhail@rentback.app"
-            aria-invalid={!!fieldErrors.tenantEmail?.length}
-          />
-          {fieldErrors.tenantEmail?.length ? (
-            <p className="mt-1 text-xs text-red-600">
-              {fieldErrors.tenantEmail[0]}
-            </p>
-          ) : null}
-        </div>
-
-        {/* Amount */}
-        <div>
-          <label className="mb-1 block text-sm font-medium">Amount</label>
-          <input
-            type="number"
-            min="0"
-            step="0.01"
-            required
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            className="w-full rounded-xl border px-3 py-2 text-sm"
-            placeholder="25000"
-            aria-invalid={!!fieldErrors.amount?.length}
-          />
-          {fieldErrors.amount?.length ? (
-            <p className="mt-1 text-xs text-red-600">
-              {fieldErrors.amount[0]}
-            </p>
-          ) : (
-            <p className="mt-1 text-xs text-gray-500">
-              Digits only; decimals allowed (we’ll handle cents).
-            </p>
-          )}
-        </div>
-
-        {/* Currency */}
-        <div>
-          <label className="mb-1 block text-sm font-medium">Currency</label>
-          <input
-            type="text"
-            maxLength={3}
-            required
-            value={currency}
-            onChange={(e) => setCurrency(e.target.value)}
-            className="w-full rounded-xl border px-3 py-2 text-sm uppercase"
-            placeholder="PKR"
-            aria-invalid={!!fieldErrors.currency?.length}
-          />
-          {fieldErrors.currency?.length ? (
-            <p className="mt-1 text-xs text-red-600">
-              {fieldErrors.currency[0]}
-            </p>
-          ) : (
-            <p className="mt-1 text-xs text-gray-500">
-              3-letter code (e.g., PKR, USD, EUR). Case doesn’t matter.
-            </p>
-          )}
-        </div>
-
-        {/* Due date */}
-        <div>
-          <label className="mb-1 block text-sm font-medium">Due date</label>
-          <input
-            type="date"
-            required
-            value={dueDate}
-            onChange={(e) => setDueDate(e.target.value)}
-            className="w-full rounded-xl border px-3 py-2 text-sm"
-            aria-invalid={!!fieldErrors.dueDate?.length}
-          />
-          {fieldErrors.dueDate?.length ? (
-            <p className="mt-1 text-xs text-red-600">
-              {fieldErrors.dueDate[0]}
-            </p>
-          ) : (
-            <p className="mt-1 text-xs text-gray-500">Format: YYYY-MM-DD</p>
-          )}
-        </div>
-
-        {/* Description */}
-        <div>
-          <label className="mb-1 block text-sm font-medium">Description</label>
-          <input
-            type="text"
-            required
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            className="w-full rounded-xl border px-3 py-2 text-sm"
-            placeholder="October rent"
-            aria-invalid={!!fieldErrors.description?.length}
-          />
-          {fieldErrors.description?.length ? (
-            <p className="mt-1 text-xs text-red-600">
-              {fieldErrors.description[0]}
-            </p>
-          ) : null}
-        </div>
-
-        <div className="pt-2">
-          <button
-            type="submit"
-            disabled={submitting}
-            className="w-full rounded-xl border bg-black px-3 py-2 text-sm text-white hover:opacity-90 disabled:opacity-50 dark:bg-white dark:text-black"
-          >
-            {submitting ? "Creating…" : "Create invoice"}
-          </button>
-        </div>
-      </form>
-
-      <div className="mt-6 rounded-xl border p-3 text-xs text-gray-600">
-        <p className="mb-1 font-semibold">Tips</p>
-        <ul className="list-disc pl-5">
-          <li>Make sure the tenant email already exists in Profiles.</li>
-          <li>Amount must be a number (e.g., 25000 or 25000.00).</li>
-          <li>Currency must be a 3-letter code (e.g., PKR).</li>
-          <li>Due date must be YYYY-MM-DD.</li>
-        </ul>
-      </div>
     </div>
   );
 }
