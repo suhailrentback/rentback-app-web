@@ -1,136 +1,89 @@
 // app/api/landlord/invoices/route.ts
 import { NextResponse } from "next/server";
-import { createRouteSupabase } from "@/lib/supabase/server";
 import { z } from "zod";
+import { createRouteSupabase } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
-const Body = z.object({
+const Payload = z.object({
   tenantEmail: z.string().email(),
-  amount: z.union([z.string(), z.number()]),
+  number: z.string().min(1),
+  description: z.string().min(1),
   currency: z.string().min(3).max(3),
-  dueDate: z.string(), // ISO or yyyy-mm-dd
-  description: z.string().min(1).max(500).optional().default(""),
-  // Use statuses allowed by your DB check constraint
-  status: z.enum(["issued", "open", "paid", "overdue"]).default("issued"),
+  total_amount: z.number().positive(), // e.g., 25000
+  due_date: z.string().min(1),         // ISO date string (YYYY-MM-DD)
 });
 
 export async function POST(req: Request) {
-  try {
-    const supabase = createRouteSupabase();
+  const supabase = createRouteSupabase();
 
-    // 1) Auth & caller role
-    const { data: userRes, error: userErr } = await supabase.auth.getUser();
-    if (userErr || !userRes?.user) {
-      return NextResponse.json({ error: "not_authenticated" }, { status: 401 });
-    }
-    const userId = userRes.user.id;
+  // 1) Caller must be signed in
+  const { data: uData, error: uErr } = await supabase.auth.getUser();
+  if (uErr || !uData?.user) {
+    return NextResponse.json({ error: "not_authenticated" }, { status: 401 });
+  }
 
-    const { data: me, error: meErr } = await supabase
-      .from("profiles")
-      .select("id, role")
-      .eq("id", userId)
-      .maybeSingle();
-
-    if (meErr || !me) {
-      return NextResponse.json({ error: "profile_not_found" }, { status: 403 });
-    }
-    if (!["staff", "admin"].includes(String(me.role))) {
-      return NextResponse.json({ error: "not_permitted" }, { status: 403 });
-    }
-
-    // 2) Validate payload
-    const json = await req.json().catch(() => null);
-    const parsed = Body.safeParse(json);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: "invalid_payload", issues: parsed.error.format() },
-        { status: 400 }
-      );
-    }
-    const { tenantEmail, amount, currency, dueDate, description, status } =
-      parsed.data;
-
-    // 3) Normalize amounts (e.g., "25000" -> 25000 -> 2,500,000 cents)
-    const amountNumber =
-      typeof amount === "string"
-        ? Number(amount.replace(/[, ]+/g, ""))
-        : Number(amount);
-
-    if (!Number.isFinite(amountNumber) || amountNumber <= 0) {
-      return NextResponse.json(
-        { error: "amount_invalid" },
-        { status: 400 }
-      );
-    }
-
-    const amountCents = Math.round(amountNumber * 100);
-    const currency3 = currency.toUpperCase();
-
-    // 4) Resolve tenant_id via RPC (bypasses RLS ambiguity)
-    const { data: tenantId, error: rpcErr } = await supabase.rpc(
-      "get_profile_id_by_email",
-      { p_email: tenantEmail.toLowerCase().trim() }
-    );
-    if (rpcErr) {
-      return NextResponse.json(
-        { error: "tenant_lookup_failed", detail: rpcErr.message },
-        { status: 400 }
-      );
-    }
-    if (!tenantId) {
-      return NextResponse.json(
-        { error: "tenant_not_found" },
-        { status: 404 }
-      );
-    }
-
-    // 5) Insert invoice
-    // If your table autogenerates "number", omit it here.
-    const { data: inserted, error: insErr } = await supabase
-      .from("invoices")
-      .insert([
-        {
-          tenant_id: tenantId,
-          status, // must match your CHECK constraint
-          issued_at: new Date().toISOString(),
-          due_date: new Date(dueDate).toISOString(),
-          amount_cents: amountCents,
-          total_amount: amountNumber,
-          currency: currency3,
-          description,
-        },
-      ])
-      .select("id, number")
-      .maybeSingle();
-
-    if (insErr) {
-      return NextResponse.json(
-        { error: "insert_failed", detail: insErr.message },
-        { status: 400 }
-      );
-    }
-    if (!inserted) {
-      return NextResponse.json(
-        { error: "insert_missing_return" },
-        { status: 500 }
-      );
-    }
-
+  // 2) Ensure caller has a profile (auto-create if missing)
+  const { data: me, error: meErr } = await supabase.rpc("ensure_profile");
+  if (meErr || !me) {
     return NextResponse.json(
-      {
-        ok: true,
-        invoice: {
-          id: inserted.id,
-          number: inserted.number ?? null,
-        },
-      },
-      { status: 201 }
-    );
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: "unexpected", detail: String(e?.message ?? e) },
+      { error: "profile_init_failed", detail: meErr?.message },
       { status: 500 }
     );
   }
+
+  // 3) Authorize: only staff/admin can create invoices for now
+  const role = String(me.role || "").toLowerCase();
+  if (!["staff", "admin"].includes(role)) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+
+  // 4) Parse payload
+  let body: z.infer<typeof Payload>;
+  try {
+    body = Payload.parse(await req.json());
+  } catch {
+    return NextResponse.json({ error: "invalid_payload" }, { status: 400 });
+  }
+
+  // 5) Resolve tenant by email (auto-create profile if needed)
+  const { data: tenantId, error: lookupErr } = await supabase.rpc("tenant_id_by_email", {
+    email_input: body.tenantEmail,
+  });
+
+  if (lookupErr) {
+    return NextResponse.json(
+      { error: "tenant_lookup_failed", detail: lookupErr.message },
+      { status: 500 }
+    );
+  }
+  if (!tenantId) {
+    return NextResponse.json({ error: "tenant_not_found" }, { status: 404 });
+  }
+
+  // 6) Insert invoice (respect your schema columns)
+  const { error: insErr, data: inserted } = await supabase
+    .from("invoices")
+    .insert({
+      tenant_id: tenantId as string,
+      status: "open", // start as OPEN
+      issued_at: new Date().toISOString(),
+      due_date: body.due_date,
+      amount_cents: Math.round(body.total_amount * 100),
+      total_amount: body.total_amount,
+      currency: body.currency,
+      description: body.description,
+      number: body.number,
+    })
+    .select("id, number")
+    .maybeSingle();
+
+  if (insErr) {
+    return NextResponse.json(
+      { error: "insert_failed", detail: insErr.message },
+      { status: 500 }
+    );
+  }
+
+  return NextResponse.json({ ok: true, invoice: inserted }, { status: 201 });
 }
