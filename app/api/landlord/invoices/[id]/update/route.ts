@@ -5,90 +5,65 @@ import { createRouteSupabase } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
-const UpdateSchema = z
-  .object({
-    number: z.string().max(64).optional(),
-    description: z.string().max(300).optional(),
-    currency: z.string().min(3).max(3).optional(),
-    total_amount: z.preprocess((v) => {
-      if (typeof v === "string") return parseFloat(v);
-      return v;
-    }, z.number().nonnegative()).optional(),
-    due_date: z
-      .string()
-      .optional()
-      .refine((s) => !s || !isNaN(new Date(s).getTime()), "Invalid date"),
-    status: z.enum(["open", "issued", "paid", "overdue"]).optional(),
-    redirect: z.string().url().optional(), // optional redirect for form POSTs
-  })
-  .refine((obj) => Object.keys(obj).some((k) =>
-    ["number","description","currency","total_amount","due_date","status"].includes(k)
-  ), { message: "No updatable fields provided" });
+const Payload = z.object({
+  amount: z.preprocess((v) => (typeof v === "string" ? parseFloat(v) : v), z.number().finite().nonnegative()),
+  currency: z.string().min(3).max(6),
+  description: z.string().max(255).optional().nullable(),
+  status: z.enum(["open", "issued", "paid", "overdue", "void"]),
+  due_date: z.string().optional().nullable(), // ISO date (YYYY-MM-DD)
+});
 
-async function handle(req: Request, params: { id: string }) {
-  const { id } = params;
+export async function POST(
+  req: Request,
+  { params }: { params: { id: string } }
+) {
   const supabase = createRouteSupabase();
+  const { id } = params;
 
-  let payload: any = {};
-  const isJSON = (req.headers.get("content-type") || "").includes("application/json");
-
-  if (isJSON) {
-    payload = await req.json().catch(() => ({}));
-  } else {
-    const fd = await req.formData();
-    payload = Object.fromEntries(fd.entries());
+  // Accept JSON or form-data
+  let body: unknown;
+  try {
+    const ct = req.headers.get("content-type") || "";
+    if (ct.includes("application/json")) {
+      body = await req.json();
+    } else {
+      const fd = await req.formData();
+      body = Object.fromEntries(fd.entries());
+    }
+  } catch {
+    return NextResponse.json({ error: "invalid_payload" }, { status: 400 });
   }
 
-  const parsed = UpdateSchema.safeParse(payload);
+  const parsed = Payload.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "invalid_payload", issues: parsed.error.issues },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "invalid_payload" }, { status: 400 });
   }
 
-  const v = parsed.data;
+  const { amount, currency, description, status, due_date } = parsed.data;
 
-  // Prepare updates
-  const updates: Record<string, any> = {};
-  if (v.number !== undefined) updates.number = v.number || null;
-  if (v.description !== undefined) updates.description = v.description || null;
-  if (v.currency !== undefined) updates.currency = v.currency.toUpperCase();
-  if (v.total_amount !== undefined) {
-    updates.total_amount = v.total_amount;
-    updates.amount_cents = Math.round((v.total_amount || 0) * 100);
-  }
-  if (v.status !== undefined) updates.status = v.status;
-  if (v.due_date !== undefined) {
-    updates.due_date = v.due_date ? new Date(v.due_date).toISOString() : null;
-  }
+  // Keep both major/minor units up to date
+  const amount_cents = Math.round((amount ?? 0) * 100);
+  const update: Record<string, unknown> = {
+    total_amount: amount,
+    amount_cents,
+    currency: (currency || "").toUpperCase(),
+    description: description ?? null,
+    status,
+    // allow null or a valid date
+    due_date: due_date ? new Date(due_date) : null,
+    updated_at: new Date().toISOString(),
+  };
 
-  // Perform update (RLS must allow staff/admin)
   const { data, error } = await supabase
     .from("invoices")
-    .update(updates)
+    .update(update)
     .eq("id", id)
     .select("id")
     .maybeSingle();
 
   if (error || !data) {
-    return NextResponse.json(
-      { error: "update_failed", details: error?.message },
-      { status: 400 }
-    );
-  }
-
-  // If form POST provided redirect, go there
-  if (!isJSON && v.redirect) {
-    return NextResponse.redirect(v.redirect, { status: 303 });
+    return NextResponse.json({ error: "update_failed" }, { status: 400 });
   }
 
   return NextResponse.json({ ok: true, id: data.id });
-}
-
-export async function POST(req: Request, { params }: { params: { id: string } }) {
-  return handle(req, params);
-}
-export async function PATCH(req: Request, { params }: { params: { id: string } }) {
-  return handle(req, params);
 }
