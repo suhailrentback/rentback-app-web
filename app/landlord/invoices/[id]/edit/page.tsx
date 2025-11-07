@@ -9,169 +9,168 @@ type InvoiceRow = {
   id: string;
   number: string | null;
   description: string | null;
-  status: string | null;
-  total_amount: number | null;
   currency: string | null;
+  total_amount: number | null;
   issued_at: string | null;
   due_date: string | null;
+  status: string | null;
 };
 
-const ALLOWED_STATUS = ["issued", "paid", "overdue"] as const;
-
-function dateInputValue(s?: string | null) {
+function fmtDateInput(s?: string | null) {
   if (!s) return "";
   const d = new Date(s);
   if (isNaN(d.getTime())) return "";
-  // yyyy-mm-dd (UTC)
-  return d.toISOString().slice(0, 10);
+  // yyyy-mm-dd
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 export default async function EditInvoicePage({
   params,
+  searchParams,
 }: {
   params: { id: string };
+  searchParams: Record<string, string | string[] | undefined>;
 }) {
   const supabase = createRouteSupabase();
+  const { id } = params;
+  const ok = (searchParams.ok ?? "").toString() === "1";
 
+  // Load existing invoice (RLS: staff/admin can read all)
   const { data, error } = await supabase
     .from("invoices")
     .select(
-      "id, number, description, status, total_amount, currency, issued_at, due_date"
+      "id, number, description, currency, total_amount, issued_at, due_date, status"
     )
-    .eq("id", params.id)
+    .eq("id", id)
     .maybeSingle();
 
-  if (error || !data) {
-    notFound();
-  }
+  if (error || !data) notFound();
 
   const inv = data as InvoiceRow;
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8">
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-5 flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">
-          Edit invoice {inv.number ?? inv.id.slice(0, 8).toUpperCase()}
+          Edit Invoice {inv.number ? `#${inv.number}` : ""}
         </h1>
         <Link
-          href="/landlord/invoices"
+          href="/landlord"
           className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
         >
-          ← Back to list
+          ← Back to Landlord
         </Link>
       </div>
+
+      {ok && (
+        <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+          Saved.
+        </div>
+      )}
 
       <form
         method="post"
         action={`/api/landlord/invoices/${inv.id}/update`}
-        className="space-y-4"
+        className="space-y-4 rounded-2xl border p-5"
       >
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <label className="block">
-            <span className="mb-1 block text-sm text-gray-700">Number</span>
+        <input
+          type="hidden"
+          name="redirect"
+          value={`/landlord/invoices/${inv.id}/edit?ok=1`}
+        />
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <label className="text-sm">
+            <div className="mb-1 text-gray-600">Invoice number (optional)</div>
             <input
-              name="number"
-              type="text"
-              defaultValue={inv.number ?? ""}
               className="w-full rounded-xl border px-3 py-2 text-sm"
-              placeholder="e.g. INV-000123"
+              name="number"
+              defaultValue={inv.number ?? ""}
+              placeholder="e.g. INV-2025-001"
             />
           </label>
 
-          <label className="block">
-            <span className="mb-1 block text-sm text-gray-700">Status</span>
-            <select
-              name="status"
-              defaultValue={(inv.status ?? "issued").toLowerCase()}
-              className="w-full rounded-xl border px-3 py-2 text-sm"
-            >
-              {ALLOWED_STATUS.map((s) => (
-                <option key={s} value={s}>
-                  {s.toUpperCase()}
-                </option>
-              ))}
-            </select>
+          <label className="text-sm">
+            <div className="mb-1 text-gray-600">Currency</div>
+            <input
+              className="w-full rounded-xl border px-3 py-2 text-sm uppercase"
+              name="currency"
+              defaultValue={(inv.currency ?? "PKR").toUpperCase()}
+              placeholder="PKR"
+              maxLength={3}
+            />
           </label>
         </div>
 
-        <label className="block">
-          <span className="mb-1 block text-sm text-gray-700">Description</span>
-          <textarea
-            name="description"
-            rows={3}
-            defaultValue={inv.description ?? ""}
+        <label className="block text-sm">
+          <div className="mb-1 text-gray-600">Description</div>
+          <input
             className="w-full rounded-xl border px-3 py-2 text-sm"
-            placeholder="Short description (shown to tenant)"
+            name="description"
+            defaultValue={inv.description ?? ""}
+            placeholder="e.g. October rent"
           />
         </label>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <label className="block">
-            <span className="mb-1 block text-sm text-gray-700">
-              Total amount
-            </span>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <label className="text-sm">
+            <div className="mb-1 text-gray-600">Total amount</div>
             <input
+              className="w-full rounded-xl border px-3 py-2 text-sm"
               name="total_amount"
               type="number"
               step="0.01"
               min="0"
-              defaultValue={
-                typeof inv.total_amount === "number" ? inv.total_amount : 0
-              }
-              className="w-full rounded-xl border px-3 py-2 text-sm"
+              defaultValue={typeof inv.total_amount === "number" ? inv.total_amount : 0}
             />
           </label>
 
-          <label className="block">
-            <span className="mb-1 block text-sm text-gray-700">Currency</span>
+          <label className="text-sm">
+            <div className="mb-1 text-gray-600">Issued at</div>
             <input
-              name="currency"
-              type="text"
-              defaultValue={(inv.currency ?? "PKR").toUpperCase()}
               className="w-full rounded-xl border px-3 py-2 text-sm"
-              maxLength={3}
-              placeholder="PKR"
+              value={fmtDateInput(inv.issued_at)}
+              disabled
+              readOnly
             />
           </label>
 
-          <div />
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <label className="block">
-            <span className="mb-1 block text-sm text-gray-700">Issued on</span>
+          <label className="text-sm">
+            <div className="mb-1 text-gray-600">Due date</div>
             <input
-              name="issued_at"
+              className="w-full rounded-xl border px-3 py-2 text-sm"
               type="date"
-              defaultValue={dateInputValue(inv.issued_at)}
-              className="w-full rounded-xl border px-3 py-2 text-sm"
-            />
-          </label>
-
-          <label className="block">
-            <span className="mb-1 block text-sm text-gray-700">Due on</span>
-            <input
               name="due_date"
-              type="date"
-              defaultValue={dateInputValue(inv.due_date)}
-              className="w-full rounded-xl border px-3 py-2 text-sm"
+              defaultValue={fmtDateInput(inv.due_date)}
             />
           </label>
         </div>
 
-        <div className="flex items-center gap-3 pt-2">
+        <label className="block text-sm">
+          <div className="mb-1 text-gray-600">Status</div>
+          <select
+            className="w-full rounded-xl border px-3 py-2 text-sm"
+            name="status"
+            defaultValue={(inv.status ?? "open").toLowerCase()}
+          >
+            {["open", "issued", "paid", "overdue"].map((s) => (
+              <option key={s} value={s}>
+                {s.toUpperCase()}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="pt-2">
           <button
             type="submit"
-            className="rounded-xl border bg-black px-3 py-2 text-sm text-white hover:opacity-90"
+            className="rounded-xl bg-black px-4 py-2 text-sm text-white hover:opacity-90"
           >
             Save changes
           </button>
-          <Link
-            href="/landlord/invoices"
-            className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
-          >
-            Cancel
-          </Link>
         </div>
       </form>
     </div>
