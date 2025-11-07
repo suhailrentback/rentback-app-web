@@ -5,7 +5,7 @@ import { createRouteSupabase } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
-type Row = {
+type InvoiceRow = {
   id: string;
   number: string | null;
   description: string | null;
@@ -16,7 +16,15 @@ type Row = {
   due_date: string | null;
 };
 
-const ALLOWED_STATUS = ["draft", "open", "issued", "paid", "overdue"] as const;
+const ALLOWED_STATUS = ["issued", "paid", "overdue"] as const;
+
+function dateInputValue(s?: string | null) {
+  if (!s) return "";
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return "";
+  // yyyy-mm-dd (UTC)
+  return d.toISOString().slice(0, 10);
+}
 
 export default async function EditInvoicePage({
   params,
@@ -24,125 +32,147 @@ export default async function EditInvoicePage({
   params: { id: string };
 }) {
   const supabase = createRouteSupabase();
-  const { id } = params;
 
   const { data, error } = await supabase
     .from("invoices")
     .select(
       "id, number, description, status, total_amount, currency, issued_at, due_date"
     )
-    .eq("id", id)
+    .eq("id", params.id)
     .maybeSingle();
 
-  if (error || !data) notFound();
+  if (error || !data) {
+    notFound();
+  }
 
-  const inv = data as Row;
-  const amt =
-    typeof inv.total_amount === "number" ? inv.total_amount : 0;
-  const cur = (inv.currency ?? "PKR").toUpperCase();
-  const issued = inv.issued_at ? new Date(inv.issued_at).toDateString() : "—";
-  const dueISO = inv.due_date ? inv.due_date.slice(0, 10) : "";
+  const inv = data as InvoiceRow;
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8">
-      <div className="mb-4 flex items-center justify-between text-sm">
-        <Link href="/landlord" className="text-blue-600 hover:underline">
-          ← Back to landlord
-        </Link>
-        <Link href="/landlord/invoices" className="text-blue-600 hover:underline">
-          All invoices
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="text-2xl font-semibold tracking-tight">
+          Edit invoice {inv.number ?? inv.id.slice(0, 8).toUpperCase()}
+        </h1>
+        <Link
+          href="/landlord/invoices"
+          className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
+        >
+          ← Back to list
         </Link>
       </div>
-
-      <h1 className="text-2xl font-semibold tracking-tight">
-        Edit Invoice {inv.number ?? inv.id.slice(0, 8).toUpperCase()}
-      </h1>
-      <p className="mb-6 text-sm text-gray-600">
-        Issued: {issued}
-      </p>
 
       <form
         method="post"
         action={`/api/landlord/invoices/${inv.id}/update`}
-        className="space-y-4 rounded-2xl border bg-white p-6"
+        className="space-y-4"
       >
-        <div>
-          <label className="mb-1 block text-sm font-medium">Status</label>
-          <select
-            name="status"
-            defaultValue={inv.status ?? "open"}
-            className="w-full rounded-xl border px-3 py-2 text-sm"
-          >
-            {ALLOWED_STATUS.map((s) => (
-              <option key={s} value={s}>
-                {s.toUpperCase()}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="mb-1 block text-sm font-medium">Due date</label>
-          <input
-            type="date"
-            name="due_date"
-            defaultValue={dueISO}
-            className="w-full rounded-xl border px-3 py-2 text-sm"
-          />
-        </div>
-
-        <div className="grid grid-cols-3 gap-3">
-          <div className="col-span-2">
-            <label className="mb-1 block text-sm font-medium">Amount</label>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <label className="block">
+            <span className="mb-1 block text-sm text-gray-700">Number</span>
             <input
-              type="number"
-              step="0.01"
-              name="total_amount"
-              defaultValue={amt}
-              className="w-full rounded-xl border px-3 py-2 text-sm"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium">Currency</label>
-            <input
+              name="number"
               type="text"
-              name="currency"
-              maxLength={3}
-              defaultValue={cur}
-              className="w-full rounded-xl border px-3 py-2 text-sm uppercase"
+              defaultValue={inv.number ?? ""}
+              className="w-full rounded-xl border px-3 py-2 text-sm"
+              placeholder="e.g. INV-000123"
             />
-          </div>
+          </label>
+
+          <label className="block">
+            <span className="mb-1 block text-sm text-gray-700">Status</span>
+            <select
+              name="status"
+              defaultValue={(inv.status ?? "issued").toLowerCase()}
+              className="w-full rounded-xl border px-3 py-2 text-sm"
+            >
+              {ALLOWED_STATUS.map((s) => (
+                <option key={s} value={s}>
+                  {s.toUpperCase()}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
 
-        <div>
-          <label className="mb-1 block text-sm font-medium">Description</label>
+        <label className="block">
+          <span className="mb-1 block text-sm text-gray-700">Description</span>
           <textarea
             name="description"
             rows={3}
             defaultValue={inv.description ?? ""}
             className="w-full rounded-xl border px-3 py-2 text-sm"
+            placeholder="Short description (shown to tenant)"
           />
+        </label>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <label className="block">
+            <span className="mb-1 block text-sm text-gray-700">
+              Total amount
+            </span>
+            <input
+              name="total_amount"
+              type="number"
+              step="0.01"
+              min="0"
+              defaultValue={
+                typeof inv.total_amount === "number" ? inv.total_amount : 0
+              }
+              className="w-full rounded-xl border px-3 py-2 text-sm"
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-1 block text-sm text-gray-700">Currency</span>
+            <input
+              name="currency"
+              type="text"
+              defaultValue={(inv.currency ?? "PKR").toUpperCase()}
+              className="w-full rounded-xl border px-3 py-2 text-sm"
+              maxLength={3}
+              placeholder="PKR"
+            />
+          </label>
+
+          <div />
         </div>
 
-        <div className="flex items-center justify-end gap-3 pt-2">
-          <Link
-            href="/landlord/invoices"
-            className="rounded-xl border px-4 py-2 text-sm hover:bg-gray-50"
-          >
-            Cancel
-          </Link>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <label className="block">
+            <span className="mb-1 block text-sm text-gray-700">Issued on</span>
+            <input
+              name="issued_at"
+              type="date"
+              defaultValue={dateInputValue(inv.issued_at)}
+              className="w-full rounded-xl border px-3 py-2 text-sm"
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-1 block text-sm text-gray-700">Due on</span>
+            <input
+              name="due_date"
+              type="date"
+              defaultValue={dateInputValue(inv.due_date)}
+              className="w-full rounded-xl border px-3 py-2 text-sm"
+            />
+          </label>
+        </div>
+
+        <div className="flex items-center gap-3 pt-2">
           <button
             type="submit"
-            className="rounded-xl border bg-black px-4 py-2 text-sm text-white hover:opacity-90"
+            className="rounded-xl border bg-black px-3 py-2 text-sm text-white hover:opacity-90"
           >
             Save changes
           </button>
+          <Link
+            href="/landlord/invoices"
+            className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
+          >
+            Cancel
+          </Link>
         </div>
-
-        {/* tiny hint */}
-        <p className="mt-2 text-xs text-gray-500">
-          Updates require landlord/staff RLS permission. If you see a “not allowed” error after redirect, your database policy may need the update policy for staff/admin.
-        </p>
       </form>
     </div>
   );
