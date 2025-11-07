@@ -1,7 +1,8 @@
+// app/api/tenant/invoices/[id]/receipt/route.ts
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import PDFDocument from "pdfkit";
 import { createRouteSupabase } from "@/lib/supabase/server";
-import { PDFDocument, StandardFonts } from "pdf-lib";
+import { z } from "zod";
 
 export const runtime = "nodejs";
 
@@ -9,27 +10,80 @@ const Invoice = z.object({
   id: z.string(),
   number: z.string().nullable().optional(),
   status: z.string().nullable().optional(),
+  description: z.string().nullable().optional(),
   issued_at: z.string().nullable().optional(),
   due_date: z.string().nullable().optional(),
-  amount_cents: z.coerce.number().nullable().optional(),
-  total_amount: z.coerce.number().nullable().optional(),
+  total_amount: z
+    .preprocess((val) => (typeof val === "string" ? parseFloat(val) : val), z.number())
+    .nullable()
+    .optional(),
   currency: z.string().nullable().optional(),
-  description: z.string().nullable().optional(),
 });
+
 type InvoiceRow = z.infer<typeof Invoice>;
+
+// Helpers
+function safeCurrency(amount: number | null | undefined, currency: string | null | undefined) {
+  const a = typeof amount === "number" ? amount : 0;
+  const c = (currency || "PKR").toUpperCase();
+  try {
+    return new Intl.NumberFormat("en", { style: "currency", currency: c }).format(a);
+  } catch {
+    return `${a.toFixed(2)} ${c}`;
+  }
+}
+
+function fmtDate(iso: string | null | undefined) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleDateString("en-GB", { year: "numeric", month: "short", day: "2-digit" });
+}
+
+function drawHeader(doc: PDFDocument, title: string) {
+  const { width } = doc.page;
+  doc.save();
+  doc.rect(0, 0, width, 64).fill("#111827");
+  doc.fill("#FFFFFF").fontSize(16).text("RentBack", 48, 22);
+  doc.fontSize(10).fill("#C7D2FE").text(title, 140, 26);
+  doc.restore();
+}
+
+function drawFooter(doc: PDFDocument) {
+  const footer = () => {
+    const { width, height } = doc.page;
+    doc.save();
+    doc.fontSize(9).fillColor("#6B7280");
+    doc.text(
+      `Generated on ${new Date().toLocaleString("en-GB")}`,
+      48,
+      height - 40,
+      { width: width - 96, align: "left" }
+    );
+    doc.text(
+      `Page ${doc.page.number}`,
+      48,
+      height - 40,
+      { width: width - 96, align: "right" }
+    );
+    doc.restore();
+  };
+  footer();
+  doc.on("pageAdded", footer);
+}
 
 export async function GET(
   _req: Request,
   { params }: { params: { id: string } }
 ) {
   const supabase = createRouteSupabase();
+  const { id } = params;
 
   const { data, error } = await supabase
     .from("invoices")
     .select(
-      "id, number, status, issued_at, due_date, amount_cents, total_amount, currency, description"
+      "id, number, status, description, issued_at, due_date, total_amount, currency"
     )
-    .eq("id", params.id)
+    .eq("id", id)
     .maybeSingle();
 
   if (error || !data) {
@@ -39,11 +93,12 @@ export async function GET(
     );
   }
 
-  const parsed = Invoice.safeParse(data);
-  if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid invoice shape" }, { status: 500 });
+  let invoice: InvoiceRow;
+  try {
+    invoice = Invoice.parse(data);
+  } catch {
+    return NextResponse.json({ error: "Invoice shape unexpected" }, { status: 500 });
   }
-  const invoice: InvoiceRow = parsed.data;
 
   const isPaid = String(invoice.status ?? "").toLowerCase() === "paid";
   if (!isPaid) {
@@ -51,49 +106,53 @@ export async function GET(
       { error: "Receipt is only available for PAID invoices" },
       { status: 409 }
     );
-    }
+  }
 
-  const total =
-    typeof invoice.total_amount === "number"
-      ? invoice.total_amount
-      : typeof invoice.amount_cents === "number"
-      ? invoice.amount_cents / 100
-      : 0;
+  // Build PDF
+  const doc = new PDFDocument({ size: "A4", margin: 48 });
+  const chunks: Buffer[] = [];
+  doc.on("data", (c) => chunks.push(c));
+  const done: Promise<Buffer> = new Promise((resolve) => doc.on("end", () => resolve(Buffer.concat(chunks))));
 
-  const pdfDoc = await PDFDocument.create();
-  const page = pdfDoc.addPage([595.28, 841.89]); // A4
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  drawHeader(doc, "Payment Receipt");
+  drawFooter(doc);
 
-  let y = 800;
-  const left = 50;
-  const line = (text: string, bold = false, size = 12) => {
-    page.drawText(text, {
-      x: left,
-      y,
-      size,
-      font: bold ? fontBold : font,
-    });
-    y -= size + 8;
-  };
+  doc.moveDown(3);
+  doc.fontSize(20).fillColor("#111827").text("Payment Receipt");
+  doc.moveDown(0.75);
+  if (invoice.description) {
+    doc.fontSize(11).fillColor("#374151").text(invoice.description);
+  }
 
-  line("Payment Receipt", true, 18);
-  line("");
-  line(`Invoice #${invoice.number ?? invoice.id}`, true);
-  line(`Status: ${String(invoice.status ?? "").toUpperCase()}`);
-  line(
-    `Issued: ${invoice.issued_at ? new Date(invoice.issued_at).toDateString() : "—"}`
+  // Meta
+  doc.moveDown(1.25);
+  doc.fontSize(11).fillColor("#111827");
+  doc.text(`Invoice: ${invoice.number ?? invoice.id}`);
+  doc.text(`Status: ${(invoice.status ?? "").toUpperCase() || "—"}`);
+  doc.text(`Issued: ${fmtDate(invoice.issued_at)}`);
+  doc.text(`Due: ${fmtDate(invoice.due_date)}`);
+
+  // Amount
+  doc.moveDown(1);
+  doc.fontSize(14).fillColor("#111827").text("Amount Received");
+  doc.fontSize(20).fillColor("#111827").text(
+    safeCurrency(invoice.total_amount ?? 0, invoice.currency ?? "PKR")
   );
-  line(
-    `Due: ${invoice.due_date ? new Date(invoice.due_date).toDateString() : "—"}`
+
+  doc.moveDown(2);
+  doc.fontSize(10).fillColor("#6B7280").text(
+    "This receipt confirms that payment has been received in full for the invoice referenced above."
   );
-  line(`Amount Received: ${total} ${invoice.currency ?? "PKR"}`);
-  if (invoice.description) line(`Description: ${invoice.description}`);
 
-  const bytes = await pdfDoc.save();
-  const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  doc.end();
+  const pdfBuffer = await done;
 
-  return new NextResponse(body as ArrayBuffer, {
+  const arrayBuffer = pdfBuffer.buffer.slice(
+    pdfBuffer.byteOffset,
+    pdfBuffer.byteOffset + pdfBuffer.byteLength
+  ) as ArrayBuffer;
+
+  return new NextResponse(arrayBuffer, {
     headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": `inline; filename="receipt-${invoice.number ?? invoice.id}.pdf"`,
