@@ -29,7 +29,7 @@ function spGet(sp: SearchParams, key: string): string | undefined {
 function buildQS(sp: SearchParams, overrides: Record<string, string | null>) {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(sp)) {
-    if (k === "from") continue; // never carry a nested backlink param
+    if (k === "from") continue;
     if (typeof v === "string") {
       if (v) qs.set(k, v);
     } else if (Array.isArray(v)) {
@@ -50,7 +50,6 @@ export default async function TenantInvoicesPage({
 }) {
   const supabase = createRouteSupabase();
 
-  // ---- Read filters from query ----
   const q = (spGet(searchParams, "q") || "").trim();
   const statusRaw = (spGet(searchParams, "status") || "").toLowerCase();
   const status = ALLOWED_STATUS.has(statusRaw) ? statusRaw : "";
@@ -63,7 +62,6 @@ export default async function TenantInvoicesPage({
   const from = (page - 1) * PAGE_SIZE;
   const to = from + PAGE_SIZE - 1;
 
-  // ---- Build query (RLS restricts to this tenant automatically) ----
   let query = supabase
     .from("invoices")
     .select(
@@ -77,19 +75,19 @@ export default async function TenantInvoicesPage({
   if (issuedTo) query = query.lte("issued_at", issuedTo);
 
   if (q) {
-    // match number or description (case-insensitive)
-    // note: % escapes are handled by supabase on server
     const like = `%${q}%`;
-    query = query.or(
-      `number.ilike.${like},description.ilike.${like}` as any // keep TS happy
-    );
+    query = query.or(`number.ilike.${like},description.ilike.${like}` as any);
   }
 
   query = query.order(sort.col, { ascending: sort.asc, nullsFirst: false }).range(from, to);
 
   const { data: rows, error, count } = await query;
+
+  const total = count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const currentQS = buildQS(searchParams, {});
+
   if (error) {
-    // Soft-fail so the page still renders
     return (
       <div className="mx-auto max-w-4xl p-6">
         <div className="mb-4 flex items-center justify-between">
@@ -111,10 +109,6 @@ export default async function TenantInvoicesPage({
     );
   }
 
-  const total = count ?? 0;
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const currentQS = buildQS(searchParams, {}); // used for backlink preservation
-
   return (
     <div className="mx-auto max-w-5xl p-6">
       <div className="mb-4 flex items-center justify-between">
@@ -126,10 +120,20 @@ export default async function TenantInvoicesPage({
         </Link>
       </div>
 
-      <h1 className="text-xl font-semibold">Invoices</h1>
-      <p className="mt-1 text-sm text-gray-600">
-        Transparent amounts, clear status, quick receipts (when paid).
-      </p>
+      <div className="flex items-end justify-between">
+        <div>
+          <h1 className="text-xl font-semibold">Invoices</h1>
+          <p className="mt-1 text-sm text-gray-600">
+            Transparent amounts, clear status, quick receipts (when paid).
+          </p>
+        </div>
+        <a
+          href={`/api/tenant/invoices/export?${currentQS}`}
+          className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
+        >
+          Export CSV
+        </a>
+      </div>
 
       {/* Filters */}
       <form method="GET" className="mt-6 rounded-2xl border p-4">
@@ -272,7 +276,7 @@ export default async function TenantInvoicesPage({
                     ? "bg-gray-50 text-gray-700 border-gray-200"
                     : "bg-yellow-50 text-yellow-800 border-yellow-200";
 
-                const backQS = encodeURIComponent(currentQS);
+                const backQS = encodeURIComponent(buildQS(searchParams, {}));
                 const detailHref = `/tenant/invoices/${inv.id}?from=${backQS}`;
 
                 return (
