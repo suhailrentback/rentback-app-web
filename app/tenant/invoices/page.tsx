@@ -22,13 +22,11 @@ const ALLOWED_SORT = ["issued_at", "due_date"] as const;
 type SortKey = (typeof ALLOWED_SORT)[number];
 
 function buildWithParams(basePath: string, next: Record<string, string | undefined>) {
-  // Use a dummy origin to construct relative URLs safely on the server
-  const url = new URL(basePath, "https://dummy.local");
+  const url = new URL(basePath, "https://dummy.local"); // safe relative URL builder
   Object.entries(next).forEach(([k, v]) => {
     if (v == null || v === "") url.searchParams.delete(k);
     else url.searchParams.set(k, v);
   });
-  // Return path + search only
   return url.pathname + (url.search ? url.search : "");
 }
 
@@ -56,7 +54,6 @@ export default async function TenantInvoicesPage({
   const from = (page - 1) * PAGE_SIZE;
   const to = from + PAGE_SIZE - 1;
 
-  // RLS will scope this to the signed-in tenant automatically.
   let query = supabase
     .from("invoices")
     .select(
@@ -65,10 +62,8 @@ export default async function TenantInvoicesPage({
     );
 
   if (q) {
-    // Search by number OR description (ILIKE)
     query = query.or(`number.ilike.%${q}%,description.ilike.%${q}%`);
   }
-
   if (st) {
     query = query.eq("status", st);
   }
@@ -77,7 +72,6 @@ export default async function TenantInvoicesPage({
 
   const { data, count, error } = await query;
   if (error) {
-    // Soft failure UI (keeps page functional)
     return (
       <div className="mx-auto max-w-5xl px-4 py-8">
         <div className="mb-4 text-sm">
@@ -108,11 +102,21 @@ export default async function TenantInvoicesPage({
     dir: asc ? "asc" : "desc",
   };
 
+  const exportUrl = buildWithParams("/api/tenant/invoices/export", baseParams);
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
-      <div className="mb-4 text-sm">
+      <div className="mb-4 flex items-center justify-between text-sm">
         <Link href="/tenant" className="text-blue-600 hover:underline">
           ← Back to dashboard
+        </Link>
+
+        {/* Export respects current query params */}
+        <Link
+          href={exportUrl}
+          className="rounded-xl border px-4 py-2 hover:bg-gray-50"
+        >
+          Export CSV
         </Link>
       </div>
 
@@ -205,9 +209,7 @@ export default async function TenantInvoicesPage({
                       >
                         {num}
                       </Link>
-                      <div className="text-xs text-gray-500">
-                        {r.description ?? ""}
-                      </div>
+                      <div className="text-xs text-gray-500">{r.description ?? ""}</div>
                     </td>
                     <td className="px-4 py-2 uppercase text-gray-700">
                       {String(r.status ?? "").toUpperCase() || "—"}
