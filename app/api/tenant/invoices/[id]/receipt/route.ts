@@ -1,145 +1,159 @@
+// app/api/tenant/invoices/[id]/receipt/route.ts
 import { NextResponse } from "next/server";
 import PDFDocument from "pdfkit";
 import { createRouteSupabase } from "@/lib/supabase/server";
-import { z } from "zod";
 
 export const runtime = "nodejs";
 
-const Invoice = z.object({
-  id: z.string(),
-  number: z.string().nullish(),
-  status: z.string().nullish(),
-  issued_at: z.string().nullish(),
-  due_date: z.string().nullish(),
-  total_amount: z.union([z.number(), z.string()]).nullish(),
-  currency: z.string().nullish(),
-  description: z.string().nullish(),
-});
+type DbInvoiceRow = {
+  id: string;
+  number: string | null;
+  status: string | null; // must be 'paid' to issue receipt
+  issued_at: string | null;
+  due_date: string | null;
+  total_amount: number | null;
+  amount_cents: number | null;
+  currency: string | null;
+  description: string | null;
+};
 
-type InvoiceRow = z.infer<typeof Invoice>;
+function safeCurrency(c: string | null | undefined): string {
+  const v = (c ?? "PKR").toUpperCase().trim();
+  return v || "PKR";
+}
 
-function fmtCurrency(amount: number, currency: string | null | undefined) {
-  const cur = currency ?? "PKR";
+function fmtAmount(total: number | null | undefined, cents: number | null | undefined, currency: string | null | undefined) {
+  const cur = safeCurrency(currency);
+  const n =
+    typeof total === "number"
+      ? total
+      : typeof cents === "number"
+      ? Math.round(cents) / 100
+      : 0;
   try {
-    return new Intl.NumberFormat("en-GB", {
+    return new Intl.NumberFormat("en-US", {
       style: "currency",
       currency: cur,
-      maximumFractionDigits: 2,
-    }).format(amount);
+      minimumFractionDigits: 2,
+    }).format(n);
   } catch {
-    return `${amount.toFixed(2)} ${cur}`;
+    return `${n.toFixed(2)} ${cur}`;
   }
 }
 
-function fmtDate(s: string | null | undefined) {
-  if (!s) return "—";
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("en-GB", {
+function fmtDate(d: string | null | undefined) {
+  if (!d) return "—";
+  const dt = new Date(d);
+  if (Number.isNaN(dt.getTime())) return "—";
+  return new Intl.DateTimeFormat("en-GB", {
     year: "numeric",
     month: "short",
     day: "2-digit",
-  });
+  }).format(dt);
 }
 
-export async function GET(
-  _req: Request,
-  { params }: { params: { id: string } }
-) {
+export async function GET(_req: Request, { params }: { params: { id: string } }) {
   const supabase = createRouteSupabase();
   const { id } = params;
 
   const { data, error } = await supabase
     .from("invoices")
     .select(
-      "id, number, status, issued_at, due_date, total_amount, currency, description"
+      "id, number, status, issued_at, due_date, total_amount, amount_cents, currency, description"
     )
     .eq("id", id)
     .maybeSingle();
 
   if (error || !data) {
-    return NextResponse.json(
-      { error: error?.message ?? "Invoice not found" },
-      { status: 404 }
-    );
+    return NextResponse.json({ error: error?.message ?? "not_found" }, { status: 404 });
   }
 
-  let invoice: InvoiceRow;
-  try {
-    invoice = Invoice.parse(data);
-  } catch {
-    return NextResponse.json({ error: "Invoice shape unexpected" }, { status: 500 });
-  }
-
-  const isPaid = String(invoice.status ?? "").toLowerCase() === "paid";
+  const inv = data as DbInvoiceRow;
+  const isPaid = String(inv.status ?? "").toLowerCase() === "paid";
   if (!isPaid) {
     return NextResponse.json(
-      { error: "Receipt is only available for PAID invoices" },
+      { error: "receipt_only_for_paid" },
       { status: 409 }
     );
   }
 
-  const amount =
-    typeof invoice.total_amount === "string"
-      ? Number.parseFloat(invoice.total_amount)
-      : invoice.total_amount ?? 0;
-
-  const amountSafe = Number.isFinite(amount) ? amount : 0;
-  const amountPretty = fmtCurrency(amountSafe, invoice.currency);
-
-  // --- Build PDF in-memory (with header/footer) ---
+  // Build PDF (in-memory)
   const doc = new PDFDocument({ size: "A4", margin: 48 });
+
   const chunks: Buffer[] = [];
-  doc.on("data", (c) => chunks.push(c));
+  doc.on("data", (c) => chunks.push(c as Buffer));
   const done: Promise<Buffer> = new Promise((resolve) =>
     doc.on("end", () => resolve(Buffer.concat(chunks)))
   );
 
   // Header
   doc
-    .fontSize(18)
-    .text("RENTBACK", { continued: false, align: "left" })
-    .moveDown(0.25);
+    .fontSize(20)
+    .fillColor("#111827")
+    .text("RentBack", { continued: false });
+
+  doc
+    .moveDown(0.2)
+    .fontSize(11)
+    .fillColor("#6B7280")
+    .text("Payment Receipt", { continued: false });
+
+  const lineY = doc.y + 8;
+  doc
+    .moveTo(doc.page.margins.left, lineY)
+    .lineTo(doc.page.width - doc.page.margins.right, lineY)
+    .lineWidth(1)
+    .strokeColor("#E5E7EB")
+    .stroke();
+
+  doc.moveDown(1);
+
+  // Receipt meta
+  const number = inv.number ?? inv.id.slice(0, 8).toUpperCase();
+  const issued = fmtDate(inv.issued_at);
+  const due = fmtDate(inv.due_date);
+  const amount = fmtAmount(inv.total_amount, inv.amount_cents, inv.currency);
+
   doc
     .fontSize(12)
-    .fillColor("#6B7280")
-    .text("Receipt", { align: "left" })
-    .moveDown(0.25);
-  doc
-    .moveTo(48, doc.y + 4)
-    .lineTo(547, doc.y + 4)
-    .strokeColor("#E5E7EB")
-    .stroke()
-    .moveDown();
+    .fillColor("#111827")
+    .text(`Invoice #: ${number}`)
+    .text(`Status: PAID`)
+    .text(`Issued: ${issued}`)
+    .text(`Due: ${due}`)
+    .text(`Amount Received: ${amount}`);
 
-  // Meta
-  doc.fillColor("#111827").fontSize(11);
-  doc.text(`Invoice #: ${invoice.number ?? invoice.id}`);
-  doc.text(`Status: ${(invoice.status ?? "").toUpperCase() || "—"}`);
-  doc.text(`Issued: ${fmtDate(invoice.issued_at)}`);
-  doc.text(`Due:    ${fmtDate(invoice.due_date)}`).moveDown();
-
-  // Amount received
-  doc.fontSize(12).text("Amount Received:", { underline: false }).moveDown(0.25);
-  doc.fontSize(12).fillColor("#111827").text(amountPretty).moveDown();
+  if (inv.description) {
+    doc.moveDown(0.5);
+    doc
+      .fontSize(11)
+      .fillColor("#374151")
+      .text("Description", { underline: false });
+    doc
+      .moveDown(0.2)
+      .fontSize(11)
+      .fillColor("#111827")
+      .text(inv.description);
+  }
 
   // Footer
-  const addFooter = () => {
-    const bottom = 780;
-    doc
-      .fontSize(9)
-      .fillColor("#6B7280")
-      .text("Generated by RentBack", 48, bottom, { align: "left" });
-    doc
-      .fontSize(9)
-      .fillColor("#6B7280")
-      .text(`Page ${doc.page.number}`, 48, bottom, { align: "right" });
-  };
-  addFooter();
+  doc.moveDown(2);
+  const footerY = doc.page.height - doc.page.margins.bottom - 24;
+  doc
+    .moveTo(doc.page.margins.left, footerY)
+    .lineTo(doc.page.width - doc.page.margins.right, footerY)
+    .lineWidth(1)
+    .strokeColor("#E5E7EB")
+    .stroke();
+  doc
+    .fontSize(9)
+    .fillColor("#6B7280")
+    .text("Generated by RentBack", doc.page.margins.left, footerY + 6);
 
   doc.end();
 
   const pdfBuffer = await done;
+
   const arrayBuffer = pdfBuffer.buffer.slice(
     pdfBuffer.byteOffset,
     pdfBuffer.byteOffset + pdfBuffer.byteLength
@@ -148,9 +162,7 @@ export async function GET(
   return new NextResponse(arrayBuffer, {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="receipt-${
-        invoice.number ?? invoice.id
-      }.pdf"`,
+      "Content-Disposition": `inline; filename="receipt-${number}.pdf"`,
       "Cache-Control": "no-store",
     },
   });
