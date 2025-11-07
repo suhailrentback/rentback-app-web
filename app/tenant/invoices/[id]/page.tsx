@@ -3,163 +3,108 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createRouteSupabase } from "@/lib/supabase/server";
 
-export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-type InvoiceRow = {
-  id: string;
-  number: string | null;
-  status: string | null; // 'open' | 'paid'
-  issued_at: string | null;
-  due_date: string | null;
-  total_amount: number | null;
-  amount_cents: number | null;
-  currency: string | null;
-  description: string | null;
-};
+type SearchParams = { [key: string]: string | string[] | undefined };
 
-function fmtDate(d: string | null | undefined) {
-  if (!d) return "—";
-  const dt = new Date(d);
-  if (Number.isNaN(dt.getTime())) return "—";
-  return new Intl.DateTimeFormat("en-GB", {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-  }).format(dt);
-}
-
-function safeCurrency(c: string | null | undefined) {
-  const v = (c ?? "PKR").toUpperCase().trim();
-  return v || "PKR";
-}
-
-function fmtAmount(
-  total: number | null | undefined,
-  cents: number | null | undefined,
-  currency: string | null | undefined
-) {
-  const cur = safeCurrency(currency);
-  const n =
-    typeof total === "number"
-      ? total
-      : typeof cents === "number"
-      ? Math.round(cents) / 100
-      : 0;
-  try {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: cur,
-      minimumFractionDigits: 2,
-    }).format(n);
-  } catch {
-    return `${n.toFixed(2)} ${cur}`;
-  }
-}
-
-export default async function InvoiceDetail({
+export default async function TenantInvoiceDetail({
   params,
   searchParams,
 }: {
   params: { id: string };
-  searchParams: { [key: string]: string | undefined };
+  searchParams?: SearchParams;
 }) {
   const supabase = createRouteSupabase();
-
   const { id } = params;
 
-  // Fetch the invoice the tenant is allowed to see
-  const { data, error } = await supabase
+  const { data: invoice, error } = await supabase
     .from("invoices")
     .select(
-      "id, number, status, issued_at, due_date, total_amount, amount_cents, currency, description"
+      "id, number, status, total_amount, currency, description, issued_at, due_date"
     )
     .eq("id", id)
     .maybeSingle();
 
-  if (error || !data) {
+  if (error || !invoice) {
     notFound();
   }
 
-  const invoice = data as InvoiceRow;
+  const backQS = typeof searchParams?.from === "string" && searchParams!.from
+    ? `?${searchParams!.from}`
+    : "";
 
-  const isPaid = String(invoice.status ?? "").toLowerCase() === "paid";
-  const amount = fmtAmount(
-    invoice.total_amount,
-    invoice.amount_cents,
-    invoice.currency
-  );
-
-  // Preserve list state if provided
-  const backHref =
-    searchParams.return && searchParams.return.startsWith("/tenant/invoices")
-      ? searchParams.return
-      : "/tenant/invoices";
-
-  const title = invoice.number ?? invoice.id.slice(0, 8).toUpperCase();
-
+  const isPaid = String(invoice.status || "").toLowerCase() === "paid";
   const invoiceUrl = `/api/tenant/invoices/${invoice.id}/pdf`;
   const receiptUrl = `/api/tenant/invoices/${invoice.id}/receipt`;
 
+  const issued = invoice.issued_at
+    ? new Date(invoice.issued_at).toDateString()
+    : "—";
+  const due = invoice.due_date
+    ? new Date(invoice.due_date).toDateString()
+    : "—";
+  const amount =
+    typeof invoice.total_amount === "number" ? invoice.total_amount : 0;
+
   return (
-    <div className="mx-auto max-w-3xl px-4 py-8">
-      <div className="mb-4">
+    <div className="mx-auto max-w-2xl p-6">
+      <div className="mb-4 flex items-center justify-between">
         <Link
-          href={backHref}
+          href={`/tenant/invoices${backQS}`}
           className="text-sm text-blue-600 hover:underline"
-          prefetch={false}
         >
           ← Back to invoices
         </Link>
+        <Link href="/sign-out" className="text-xs text-gray-500 hover:underline">
+          Sign out
+        </Link>
       </div>
 
-      <h1 className="text-2xl font-semibold tracking-tight">
-        Invoice {title}
+      <h1 className="text-xl font-semibold">
+        Invoice {invoice.number ? `#${invoice.number}` : ""}
       </h1>
       <p className="mt-1 text-sm text-gray-600">
-        {invoice.description ?? "—"} ·{" "}
-        <span className={isPaid ? "text-green-700" : "text-amber-700"}>
-          {isPaid ? "PAID" : "OPEN"}
-        </span>
+        {invoice.description || "—"} · {String(invoice.status || "").toUpperCase()}
       </p>
 
-      <div className="mt-6 grid gap-4 sm:grid-cols-2">
-        <a
-          href={invoiceUrl}
-          className="inline-flex items-center justify-center rounded-xl border px-4 py-2 text-sm hover:bg-gray-50"
-        >
-          Download invoice (PDF)
-        </a>
-        <a
-          href={receiptUrl}
-          className={`inline-flex items-center justify-center rounded-xl border px-4 py-2 text-sm hover:bg-gray-50 ${
-            isPaid ? "" : "opacity-60 pointer-events-none"
-          }`}
-          aria-disabled={!isPaid}
-          title={isPaid ? "Download receipt" : "Receipt available after payment"}
-        >
-          Download receipt (PDF)
-        </a>
-      </div>
+      <div className="mt-6 space-y-3 rounded-2xl border p-4">
+        <div className="flex items-center gap-2">
+          <a
+            href={invoiceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
+          >
+            Download invoice (PDF)
+          </a>
+          <a
+            href={receiptUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`rounded-xl border px-3 py-2 text-sm hover:bg-gray-50 ${
+              isPaid ? "" : "pointer-events-none opacity-50"
+            }`}
+          >
+            Download receipt (PDF)
+          </a>
+        </div>
 
-      <div className="mt-8 overflow-hidden rounded-xl border bg-white">
-        <dl className="grid grid-cols-1 gap-x-6 gap-y-4 p-6 sm:grid-cols-2">
+        <div className="grid grid-cols-2 gap-2 text-sm">
           <div>
-            <dt className="text-xs text-gray-500">Total</dt>
-            <dd className="mt-1 font-medium">{amount}</dd>
+            <div className="text-gray-500">Total</div>
+            <div className="font-medium">
+              {amount} {invoice.currency || "PKR"}
+            </div>
           </div>
           <div>
-            <dt className="text-xs text-gray-500">Status</dt>
-            <dd className="mt-1">{(invoice.status ?? "—").toUpperCase()}</dd>
+            <div className="text-gray-500">Issued</div>
+            <div className="font-medium">{issued}</div>
           </div>
           <div>
-            <dt className="text-xs text-gray-500">Issued</dt>
-            <dd className="mt-1">{fmtDate(invoice.issued_at)}</dd>
+            <div className="text-gray-500">Due</div>
+            <div className="font-medium">{due}</div>
           </div>
-          <div>
-            <dt className="text-xs text-gray-500">Due</dt>
-            <dd className="mt-1">{fmtDate(invoice.due_date)}</dd>
-          </div>
-        </dl>
+        </div>
       </div>
     </div>
   );
