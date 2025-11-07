@@ -4,198 +4,192 @@ import { createRouteSupabase } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
-type InvoiceListRow = {
+type Search = {
+  q?: string;
+  status?: string;
+  page?: string;
+  limit?: string;
+  ok?: string;
+  err?: string;
+};
+
+type Row = {
   id: string;
   number: string | null;
   description: string | null;
   status: string | null;
   total_amount: number | null;
-  amount_cents: number | null;
   currency: string | null;
   issued_at: string | null;
   due_date: string | null;
-  tenant_id: string | null;
 };
 
-const PAGE_SIZE = 10;
-const ALLOWED_STATUS = ["open", "issued", "paid", "overdue", "draft"] as const;
-const ALLOWED_SORT = ["issued_at", "due_date"] as const;
+const ALLOWED_STATUS = ["draft", "open", "issued", "paid", "overdue"] as const;
 
-function qp(base: URL, next: Record<string, string | undefined>) {
-  const u = new URL(base);
-  Object.entries(next).forEach(([k, v]) => {
-    if (v == null || v === "") u.searchParams.delete(k);
-    else u.searchParams.set(k, v);
-  });
-  return u.toString();
+function pickStatus(s?: string): string | undefined {
+  if (!s) return;
+  const v = s.toLowerCase();
+  return (ALLOWED_STATUS as readonly string[]).includes(v) ? v : undefined;
 }
 
 export default async function LandlordInvoicesPage({
   searchParams,
 }: {
-  searchParams: Record<string, string | string[] | undefined>;
+  searchParams: Search;
 }) {
   const supabase = createRouteSupabase();
 
-  const q =
-    typeof searchParams.q === "string" ? searchParams.q.trim() : "";
-  const stRaw =
-    typeof searchParams.st === "string" ? searchParams.st.trim().toLowerCase() : "";
-  const st = ALLOWED_STATUS.includes(stRaw as any) ? stRaw : "";
-  const sortRaw =
-    typeof searchParams.sort === "string" ? searchParams.sort.trim() : "";
-  const sort: (typeof ALLOWED_SORT)[number] = (ALLOWED_SORT as readonly string[]).includes(sortRaw)
-    ? (sortRaw as (typeof ALLOWED_SORT)[number])
-    : "issued_at";
-  const dirRaw =
-    typeof searchParams.dir === "string" ? searchParams.dir.trim().toLowerCase() : "desc";
-  const asc = dirRaw === "asc";
-  const page = Math.max(
-    1,
-    Number.isFinite(Number(searchParams.page)) ? Number(searchParams.page) : 1
+  const q = (Array.isArray(searchParams.q) ? searchParams.q[0] : searchParams.q) || "";
+  const status = pickStatus(
+    Array.isArray(searchParams.status) ? searchParams.status[0] : searchParams.status
   );
-
-  const from = (page - 1) * PAGE_SIZE;
-  const to = from + PAGE_SIZE - 1;
+  const page = Number(
+    (Array.isArray(searchParams.page) ? searchParams.page[0] : searchParams.page) || "1"
+  );
+  const limit = Number(
+    (Array.isArray(searchParams.limit) ? searchParams.limit[0] : searchParams.limit) ||
+      "10"
+  );
+  const pageSize = Number.isFinite(limit) && limit > 0 && limit <= 100 ? limit : 10;
+  const pageNum = Number.isFinite(page) && page > 0 ? page : 1;
+  const from = (pageNum - 1) * pageSize;
+  const to = from + pageSize - 1;
 
   let query = supabase
     .from("invoices")
     .select(
-      "id, number, description, status, total_amount, amount_cents, currency, issued_at, due_date, tenant_id",
+      "id, number, description, status, total_amount, currency, issued_at, due_date",
       { count: "exact" }
-    );
+    )
+    .order("issued_at", { ascending: false });
 
+  if (status) {
+    query = query.eq("status", status);
+  }
   if (q) {
-    // match on number or description (ILIKE)
+    // simple text search over number/description (ilike safe)
     query = query.or(`number.ilike.%${q}%,description.ilike.%${q}%`);
   }
 
-  if (st) {
-    query = query.eq("status", st);
-  }
+  const { data, error, count } = await query.range(from, to);
 
-  query = query.order(sort, { ascending: asc }).range(from, to);
+  const rows: Row[] = Array.isArray(data) ? (data as Row[]) : [];
 
-  const { data, count, error } = await query;
+  const ok = (Array.isArray(searchParams.ok) ? searchParams.ok[0] : searchParams.ok) || "";
+  const err =
+    (Array.isArray(searchParams.err) ? searchParams.err[0] : searchParams.err) || "";
 
-  const rows = (data ?? []) as InvoiceListRow[];
-  const total = typeof count === "number" && count >= 0 ? count : rows.length;
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  // build Export CSV URL preserving filters
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  if (status) params.set("status", status);
+  const exportHref = `/api/landlord/invoices/export${params.toString() ? `?${params.toString()}` : ""}`;
 
-  const current = new URL("https://dummy.local/landlord/invoices");
-  if (q) current.searchParams.set("q", q);
-  if (st) current.searchParams.set("st", st);
-  if (sort) current.searchParams.set("sort", sort);
-  current.searchParams.set("dir", asc ? "asc" : "desc");
-  current.searchParams.set("page", String(page));
+  // compute pager URLs
+  const total = typeof count === "number" ? count : rows.length;
+  const hasPrev = pageNum > 1;
+  const hasNext = to + 1 < total;
+
+  const buildPageHref = (n: number) => {
+    const sp = new URLSearchParams();
+    if (q) sp.set("q", q);
+    if (status) sp.set("status", status);
+    sp.set("page", String(n));
+    sp.set("limit", String(pageSize));
+    return `/landlord/invoices?${sp.toString()}`;
+  };
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
       <div className="mb-4 flex items-center justify-between">
-        <div className="space-y-1">
-          <div className="text-sm">
-            <Link href="/landlord" className="text-blue-600 hover:underline">
-              ← Back to landlord
-            </Link>
-          </div>
-          <h1 className="text-2xl font-semibold tracking-tight">Invoices</h1>
-          <p className="text-sm text-gray-600">
-            Search, filter, sort, and edit invoices.
-          </p>
+        <h1 className="text-2xl font-semibold tracking-tight">Invoices</h1>
+        <div className="flex items-center gap-2">
+          <Link
+            href={exportHref}
+            className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
+          >
+            Export CSV
+          </Link>
+          <Link
+            href="/landlord/invoices/new"
+            className="rounded-xl border bg-black px-3 py-2 text-sm text-white hover:opacity-90"
+          >
+            Create invoice
+          </Link>
         </div>
-        <Link
-          href="/landlord/invoices/new"
-          className="rounded-xl bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
-        >
-          + Create invoice
-        </Link>
       </div>
 
-      {/* Controls */}
-      <form method="get" className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-4">
+      <form className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-4">
         <input
           type="text"
           name="q"
-          placeholder="Search number or description…"
           defaultValue={q}
-          className="rounded-xl border px-3 py-2 text-sm"
+          placeholder="Search number or description…"
+          className="w-full rounded-xl border px-3 py-2 text-sm"
         />
         <select
-          name="st"
-          defaultValue={st}
-          className="rounded-xl border px-3 py-2 text-sm"
+          name="status"
+          defaultValue={status ?? ""}
+          className="w-full rounded-xl border px-3 py-2 text-sm"
         >
-          <option value="">All status</option>
+          <option value="">All statuses</option>
           {ALLOWED_STATUS.map((s) => (
             <option key={s} value={s}>
               {s.toUpperCase()}
             </option>
           ))}
         </select>
-
-        <div className="flex gap-2">
-          <select
-            name="sort"
-            defaultValue={sort}
-            className="w-full rounded-xl border px-3 py-2 text-sm"
-          >
-            <option value="issued_at">Sort by ISSUED</option>
-            <option value="due_date">Sort by DUE</option>
-          </select>
-          <select
-            name="dir"
-            defaultValue={asc ? "asc" : "desc"}
-            className="w-32 rounded-xl border px-3 py-2 text-sm"
-          >
-            <option value="desc">DESC</option>
-            <option value="asc">ASC</option>
-          </select>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            type="submit"
-            className="rounded-xl border px-4 py-2 text-sm hover:bg-gray-50"
-          >
-            Apply
-          </button>
-          <Link
-            href="/landlord/invoices"
-            className="rounded-xl border px-4 py-2 text-sm hover:bg-gray-50"
-          >
-            Reset
-          </Link>
-        </div>
+        <input
+          type="number"
+          name="limit"
+          min={1}
+          max={100}
+          defaultValue={pageSize}
+          className="w-full rounded-xl border px-3 py-2 text-sm"
+        />
+        <button
+          type="submit"
+          className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
+        >
+          Apply
+        </button>
       </form>
 
-      {/* Table */}
-      <div className="overflow-x-auto rounded-2xl border bg-white">
+      {ok && (
+        <div className="mb-3 rounded-xl border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
+          {ok === "updated" ? "Invoice updated." : "Success."}
+        </div>
+      )}
+      {err && (
+        <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+          {err === "update_failed" ? "Update failed." : "Error."}
+        </div>
+      )}
+
+      <div className="overflow-x-auto rounded-2xl border">
         <table className="min-w-full text-sm">
-          <thead className="bg-gray-50 text-left text-gray-600">
-            <tr>
-              <th className="px-4 py-2">Number</th>
-              <th className="px-4 py-2">Status</th>
-              <th className="px-4 py-2">Amount</th>
-              <th className="px-4 py-2">Issued</th>
-              <th className="px-4 py-2">Due</th>
-              <th className="px-4 py-2"></th>
+          <thead className="bg-gray-50">
+            <tr className="text-left">
+              <th className="px-3 py-2">Number</th>
+              <th className="px-3 py-2">Status</th>
+              <th className="px-3 py-2">Amount</th>
+              <th className="px-3 py-2">Currency</th>
+              <th className="px-3 py-2">Issued</th>
+              <th className="px-3 py-2">Due</th>
+              <th className="px-3 py-2">Actions</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-gray-500">
+                <td className="px-3 py-6 text-gray-500" colSpan={7}>
                   No invoices found.
                 </td>
               </tr>
             ) : (
               rows.map((r) => {
                 const amt =
-                  typeof r.total_amount === "number"
-                    ? r.total_amount
-                    : typeof r.amount_cents === "number"
-                    ? Math.round(r.amount_cents) / 100
-                    : 0;
+                  typeof r.total_amount === "number" ? r.total_amount : 0;
                 const cur = (r.currency ?? "PKR").toUpperCase();
                 const issued = r.issued_at
                   ? new Date(r.issued_at).toDateString()
@@ -203,39 +197,35 @@ export default async function LandlordInvoicesPage({
                 const due = r.due_date
                   ? new Date(r.due_date).toDateString()
                   : "—";
-                const num = r.number ?? r.id.slice(0, 8).toUpperCase();
 
                 return (
                   <tr key={r.id} className="border-t">
-                    <td className="px-4 py-2">
-                      <Link
-                        href={`/tenant/invoices/${r.id}`}
-                        className="font-medium text-blue-600 hover:underline"
-                      >
-                        {num}
-                      </Link>
+                    <td className="px-3 py-2">
+                      <div className="font-medium">
+                        {r.number ?? r.id.slice(0, 8).toUpperCase()}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {r.description ?? "—"}
+                      </div>
                     </td>
-                    <td className="px-4 py-2 uppercase text-gray-700">
-                      {String(r.status ?? "").toUpperCase() || "—"}
-                    </td>
-                    <td className="px-4 py-2">
-                      {amt} {cur}
-                    </td>
-                    <td className="px-4 py-2">{issued}</td>
-                    <td className="px-4 py-2">{due}</td>
-                    <td className="px-4 py-2 text-right">
-                      <div className="flex justify-end gap-2">
+                    <td className="px-3 py-2">{(r.status ?? "").toUpperCase()}</td>
+                    <td className="px-3 py-2">{amt}</td>
+                    <td className="px-3 py-2">{cur}</td>
+                    <td className="px-3 py-2">{issued}</td>
+                    <td className="px-3 py-2">{due}</td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-2">
                         <Link
                           href={`/landlord/invoices/${r.id}/edit`}
-                          className="rounded-xl border px-3 py-1 hover:bg-gray-50"
+                          className="text-blue-600 hover:underline"
                         >
                           Edit
                         </Link>
                         <Link
-                          href={`/api/tenant/invoices/${r.id}/pdf`}
-                          className="rounded-xl border px-3 py-1 hover:bg-gray-50"
+                          href={`/tenant/invoices/${r.id}`}
+                          className="text-gray-600 hover:underline"
                         >
-                          PDF
+                          View
                         </Link>
                       </div>
                     </td>
@@ -247,33 +237,23 @@ export default async function LandlordInvoicesPage({
         </table>
       </div>
 
-      {/* Pager (preserves filters/sort) */}
       <div className="mt-4 flex items-center justify-between text-sm">
         <div className="text-gray-600">
-          {rows.length > 0
-            ? `Showing ${from + 1}–${Math.min(to + 1, total)} of ${total}`
-            : "No results"}
+          Showing {rows.length} of {total} • Page {pageNum}
         </div>
         <div className="flex items-center gap-2">
           <Link
-            href={qp(current, { page: String(Math.max(1, page - 1)) })}
-            className={`rounded-xl border px-3 py-1 ${
-              page <= 1 ? "pointer-events-none opacity-40" : "hover:bg-gray-50"
+            href={hasPrev ? buildPageHref(pageNum - 1) : "#"}
+            className={`rounded-xl border px-3 py-2 ${
+              hasPrev ? "hover:bg-gray-50" : "pointer-events-none opacity-40"
             }`}
           >
             ← Prev
           </Link>
-          <span className="text-gray-600">
-            Page {page} / {totalPages}
-          </span>
           <Link
-            href={qp(current, {
-              page: String(Math.min(totalPages, page + 1)),
-            })}
-            className={`rounded-xl border px-3 py-1 ${
-              page >= totalPages
-                ? "pointer-events-none opacity-40"
-                : "hover:bg-gray-50"
+            href={hasNext ? buildPageHref(pageNum + 1) : "#"}
+            className={`rounded-xl border px-3 py-2 ${
+              hasNext ? "hover:bg-gray-50" : "pointer-events-none opacity-40"
             }`}
           >
             Next →
