@@ -2,386 +2,347 @@
 import Link from "next/link";
 import { createRouteSupabase } from "@/lib/supabase/server";
 
-export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-type InvoiceRow = {
-  id: string;
-  number: string | null;
-  status: string | null;
-  total_amount: number | null;
-  currency: string | null;
-  issued_at: string | null;
-  due_date: string | null;
-  description: string | null;
+type SearchParams = { [key: string]: string | string[] | undefined };
+
+const PAGE_SIZE = 10 as const;
+const ALLOWED_STATUS = new Set(["open", "issued", "paid", "overdue", "void"]);
+const SORT_MAP: Record<
+  string,
+  { col: "issued_at" | "due_date" | "total_amount"; asc: boolean }
+> = {
+  issued_desc: { col: "issued_at", asc: false },
+  issued_asc: { col: "issued_at", asc: true },
+  due_desc: { col: "due_date", asc: false },
+  due_asc: { col: "due_date", asc: true },
+  amount_desc: { col: "total_amount", asc: false },
+  amount_asc: { col: "total_amount", asc: true },
 };
 
-const STATUS_OPTIONS = ["issued", "paid", "overdue", "open"] as const;
-const SORT_OPTIONS = [
-  { value: "issued_desc", label: "Issued (newest)" },
-  { value: "issued_asc", label: "Issued (oldest)" },
-  { value: "due_asc", label: "Due (soonest)" },
-  { value: "due_desc", label: "Due (latest)" },
-  { value: "amount_desc", label: "Amount (high→low)" },
-  { value: "amount_asc", label: "Amount (low→high)" },
-] as const;
-
-function fmtDate(s?: string | null) {
-  if (!s) return "—";
-  const d = new Date(s);
-  if (isNaN(d.getTime())) return "—";
-  return d.toDateString();
+function spGet(sp: SearchParams, key: string): string | undefined {
+  const v = sp[key];
+  if (!v) return undefined;
+  return Array.isArray(v) ? v[0] : v;
 }
 
-function qp(
-  basePath: string,
-  params: Record<string, string | number | undefined>
-) {
-  const sp = new URLSearchParams();
-  Object.entries(params).forEach(([k, v]) => {
-    if (v === undefined || v === "") return;
-    sp.set(k, String(v));
-  });
-  const q = sp.toString();
-  return q ? `${basePath}?${q}` : basePath;
+function buildQS(sp: SearchParams, overrides: Record<string, string | null>) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(sp)) {
+    if (k === "from") continue; // never carry a nested backlink param
+    if (typeof v === "string") {
+      if (v) qs.set(k, v);
+    } else if (Array.isArray(v)) {
+      for (const item of v) if (item) qs.append(k, item);
+    }
+  }
+  for (const [k, v] of Object.entries(overrides)) {
+    if (v === null) qs.delete(k);
+    else qs.set(k, v);
+  }
+  return qs.toString();
 }
 
 export default async function TenantInvoicesPage({
   searchParams,
 }: {
-  searchParams: Record<string, string | string[] | undefined>;
+  searchParams: SearchParams;
 }) {
   const supabase = createRouteSupabase();
 
-  // Read filters from query
-  const q = (searchParams.q ?? "")!.toString().trim();
-  const status = (searchParams.status ?? "")!.toString().trim().toLowerCase();
-  const issued_from = (searchParams.issued_from ?? "")!.toString().trim();
-  const issued_to = (searchParams.issued_to ?? "")!.toString().trim();
-  const sort = (searchParams.sort ?? "issued_desc")!.toString();
-  const limit = Math.min(
-    50,
-    Math.max(5, parseInt((searchParams.limit ?? "10").toString(), 10) || 10)
-  );
-  const page = Math.max(1, parseInt((searchParams.page ?? "1").toString(), 10) || 1);
-  const from = (page - 1) * limit;
-  const to = from + limit - 1;
+  // ---- Read filters from query ----
+  const q = (spGet(searchParams, "q") || "").trim();
+  const statusRaw = (spGet(searchParams, "status") || "").toLowerCase();
+  const status = ALLOWED_STATUS.has(statusRaw) ? statusRaw : "";
+  const cur = (spGet(searchParams, "cur") || "").toUpperCase();
+  const issuedFrom = spGet(searchParams, "from_date") || "";
+  const issuedTo = spGet(searchParams, "to_date") || "";
+  const sortKey = spGet(searchParams, "sort") || "issued_desc";
+  const sort = SORT_MAP[sortKey] ?? SORT_MAP["issued_desc"];
+  const page = Math.max(1, parseInt(spGet(searchParams, "p") || "1", 10) || 1);
+  const from = (page - 1) * PAGE_SIZE;
+  const to = from + PAGE_SIZE - 1;
 
-  // Build query (RLS will scope to this tenant automatically)
+  // ---- Build query (RLS restricts to this tenant automatically) ----
   let query = supabase
     .from("invoices")
     .select(
-      "id, number, status, total_amount, currency, due_date, issued_at, description",
+      "id, number, status, total_amount, currency, description, issued_at, due_date",
       { count: "exact" }
     );
 
+  if (status) query = query.eq("status", status);
+  if (cur) query = query.eq("currency", cur);
+  if (issuedFrom) query = query.gte("issued_at", issuedFrom);
+  if (issuedTo) query = query.lte("issued_at", issuedTo);
+
   if (q) {
-    // Search in number OR description
+    // match number or description (case-insensitive)
+    // note: % escapes are handled by supabase on server
+    const like = `%${q}%`;
     query = query.or(
-      `number.ilike.%${q.replace(/%/g, "")}%,description.ilike.%${q.replace(/%/g, "")}%`
+      `number.ilike.${like},description.ilike.${like}` as any // keep TS happy
     );
   }
 
-  if (status && STATUS_OPTIONS.includes(status as any)) {
-    query = query.eq("status", status);
-  }
+  query = query.order(sort.col, { ascending: sort.asc, nullsFirst: false }).range(from, to);
 
-  if (issued_from) {
-    const iso = new Date(issued_from).toISOString();
-    query = query.gte("issued_at", iso);
-  }
-
-  if (issued_to) {
-    // include entire day
-    const end = new Date(issued_to);
-    end.setHours(23, 59, 59, 999);
-    query = query.lte("issued_at", end.toISOString());
-  }
-
-  // Sorting
-  switch (sort) {
-    case "issued_asc":
-      query = query.order("issued_at", { ascending: true, nullsFirst: true });
-      break;
-    case "issued_desc":
-      query = query.order("issued_at", { ascending: false, nullsFirst: true });
-      break;
-    case "due_asc":
-      query = query.order("due_date", { ascending: true, nullsFirst: true });
-      break;
-    case "due_desc":
-      query = query.order("due_date", { ascending: false, nullsFirst: true });
-      break;
-    case "amount_asc":
-      query = query.order("total_amount", { ascending: true, nullsFirst: true });
-      break;
-    case "amount_desc":
-      query = query.order("total_amount", { ascending: false, nullsFirst: true });
-      break;
-    default:
-      query = query.order("issued_at", { ascending: false, nullsFirst: true });
-  }
-
-  // Pagination
-  query = query.range(from, to);
-
-  const { data, count, error } = await query;
-
+  const { data: rows, error, count } = await query;
   if (error) {
-    // Soft-fail to keep UX working under strict RLS
+    // Soft-fail so the page still renders
     return (
-      <div className="mx-auto max-w-5xl px-4 py-8">
-        <h1 className="text-2xl font-semibold tracking-tight">Invoices</h1>
+      <div className="mx-auto max-w-4xl p-6">
+        <div className="mb-4 flex items-center justify-between">
+          <Link href="/tenant" className="text-sm text-blue-600 hover:underline">
+            ← Back to dashboard
+          </Link>
+          <Link href="/sign-out" className="text-xs text-gray-500 hover:underline">
+            Sign out
+          </Link>
+        </div>
+        <h1 className="text-xl font-semibold">Invoices</h1>
         <p className="mt-1 text-sm text-gray-600">
           Transparent amounts, clear status, quick receipts (when paid).
         </p>
-        <div className="mt-6 rounded-xl border bg-red-50 p-4 text-sm text-red-700">
-          Failed to load invoices.
-        </div>
-        <div className="mt-6 flex items-center gap-2">
-          <Link
-            href="/tenant"
-            className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
-          >
-            ← Back to dashboard
-          </Link>
-          <Link
-            href="/tenant/invoices"
-            className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
-          >
-            Retry
-          </Link>
+        <div className="mt-6 rounded-2xl border p-4">
+          <p className="text-sm text-red-600">Failed to load invoices.</p>
         </div>
       </div>
     );
   }
 
-  const rows = (data ?? []) as InvoiceRow[];
-  const total = count ?? rows.length;
-  const totalPages = Math.max(1, Math.ceil(total / limit));
-
-  const baseParams = {
-    q,
-    status,
-    issued_from,
-    issued_to,
-    sort,
-    limit,
-  };
+  const total = count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const currentQS = buildQS(searchParams, {}); // used for backlink preservation
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8">
-      <div className="mb-4 flex items-center justify-between gap-2">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Invoices</h1>
-          <p className="mt-1 text-sm text-gray-600">
-            Transparent amounts, clear status, quick receipts (when paid).
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {/* NEW: Export CSV button (preserves filters) */}
-          <Link
-            href={qp("/api/tenant/invoices/csv", baseParams)}
-            className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
-          >
-            Export CSV
-          </Link>
-
-          <Link
-            href="/tenant"
-            className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
-          >
-            ← Back to dashboard
-          </Link>
-        </div>
+    <div className="mx-auto max-w-5xl p-6">
+      <div className="mb-4 flex items-center justify-between">
+        <Link href="/tenant" className="text-sm text-blue-600 hover:underline">
+          ← Back to dashboard
+        </Link>
+        <Link href="/sign-out" className="text-xs text-gray-500 hover:underline">
+          Sign out
+        </Link>
       </div>
 
+      <h1 className="text-xl font-semibold">Invoices</h1>
+      <p className="mt-1 text-sm text-gray-600">
+        Transparent amounts, clear status, quick receipts (when paid).
+      </p>
+
       {/* Filters */}
-      <form method="get" className="mb-6 grid grid-cols-1 gap-3 md:grid-cols-6">
-        <input
-          className="rounded-xl border px-3 py-2 text-sm md:col-span-2"
-          type="text"
-          name="q"
-          placeholder="Search number or description…"
-          defaultValue={q}
-        />
+      <form method="GET" className="mt-6 rounded-2xl border p-4">
+        <input type="hidden" name="p" value="1" />
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-xs text-gray-500">Search</label>
+            <input
+              name="q"
+              defaultValue={q}
+              placeholder="Invoice # or description"
+              className="w-full rounded-xl border px-3 py-2 text-sm"
+            />
+          </div>
 
-        <select
-          name="status"
-          defaultValue={status}
-          className="rounded-xl border px-3 py-2 text-sm"
-        >
-          <option value="">Any status</option>
-          {STATUS_OPTIONS.map((s) => (
-            <option key={s} value={s}>
-              {s.toUpperCase()}
-            </option>
-          ))}
-        </select>
+          <div>
+            <label className="mb-1 block text-xs text-gray-500">Status</label>
+            <select
+              name="status"
+              defaultValue={status || ""}
+              className="w-full rounded-xl border px-3 py-2 text-sm"
+            >
+              <option value="">All</option>
+              <option value="open">Open</option>
+              <option value="issued">Issued</option>
+              <option value="paid">Paid</option>
+              <option value="overdue">Overdue</option>
+              <option value="void">Void</option>
+            </select>
+          </div>
 
-        <input
-          className="rounded-xl border px-3 py-2 text-sm"
-          type="date"
-          name="issued_from"
-          defaultValue={issued_from}
-          placeholder="Issued from"
-        />
-        <input
-          className="rounded-xl border px-3 py-2 text-sm"
-          type="date"
-          name="issued_to"
-          defaultValue={issued_to}
-          placeholder="Issued to"
-        />
+          <div>
+            <label className="mb-1 block text-xs text-gray-500">Currency</label>
+            <input
+              name="cur"
+              maxLength={6}
+              defaultValue={cur}
+              className="w-full rounded-xl border px-3 py-2 text-sm"
+              placeholder="PKR / USD"
+            />
+          </div>
 
-        <select
-          name="sort"
-          defaultValue={sort}
-          className="rounded-xl border px-3 py-2 text-sm"
-        >
-          {SORT_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+          <div>
+            <label className="mb-1 block text-xs text-gray-500">Issued from</label>
+            <input
+              type="date"
+              name="from_date"
+              defaultValue={issuedFrom}
+              className="w-full rounded-xl border px-3 py-2 text-sm"
+            />
+          </div>
 
-        <div className="flex items-center gap-2 md:col-span-6">
-          <select
-            name="limit"
-            defaultValue={String(limit)}
-            className="rounded-xl border px-3 py-2 text-sm"
-          >
-            {["10", "20", "50"].map((n) => (
-              <option key={n} value={n}>
-                {n} / page
-              </option>
-            ))}
-          </select>
+          <div>
+            <label className="mb-1 block text-xs text-gray-500">Issued to</label>
+            <input
+              type="date"
+              name="to_date"
+              defaultValue={issuedTo}
+              className="w-full rounded-xl border px-3 py-2 text-sm"
+            />
+          </div>
 
+          <div>
+            <label className="mb-1 block text-xs text-gray-500">Sort</label>
+            <select
+              name="sort"
+              defaultValue={sortKey}
+              className="w-full rounded-xl border px-3 py-2 text-sm"
+            >
+              <option value="issued_desc">Issued date ↓</option>
+              <option value="issued_asc">Issued date ↑</option>
+              <option value="due_desc">Due date ↓</option>
+              <option value="due_asc">Due date ↑</option>
+              <option value="amount_desc">Amount ↓</option>
+              <option value="amount_asc">Amount ↑</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="mt-4 flex items-center gap-2">
           <button
             type="submit"
-            className="rounded-xl border bg-black px-3 py-2 text-sm text-white hover:opacity-90"
+            className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
           >
             Apply
           </button>
-
           <Link
             href="/tenant/invoices"
             className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
           >
             Reset
           </Link>
+          <div className="ml-auto text-xs text-gray-500">
+            {total} result{total === 1 ? "" : "s"}
+          </div>
         </div>
       </form>
 
-      {/* List */}
-      {rows.length === 0 ? (
-        <div className="rounded-xl border p-6 text-sm text-gray-600">
-          No invoices found{q || status || issued_from || issued_to ? " for your filters" : ""}.
-        </div>
-      ) : (
-        <div className="overflow-hidden rounded-2xl border">
-          <table className="min-w-full text-sm">
-            <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
+      {/* Results */}
+      <div className="mt-6 overflow-hidden rounded-2xl border">
+        <table className="min-w-full text-sm">
+          <thead className="bg-gray-50 text-gray-700">
+            <tr>
+              <th className="px-4 py-2 text-left">Invoice #</th>
+              <th className="px-4 py-2 text-left">Description</th>
+              <th className="px-4 py-2 text-left">Status</th>
+              <th className="px-4 py-2 text-right">Amount</th>
+              <th className="px-4 py-2 text-left">Currency</th>
+              <th className="px-4 py-2 text-left">Issued</th>
+              <th className="px-4 py-2 text-left">Due</th>
+              <th className="px-4 py-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {(rows || []).length === 0 ? (
               <tr>
-                <th className="px-4 py-3">Invoice</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Issued</th>
-                <th className="px-4 py-3">Due</th>
-                <th className="px-4 py-3 text-right">Total</th>
-                <th className="px-4 py-3"></th>
+                <td colSpan={8} className="px-4 py-6 text-center text-gray-500">
+                  No invoices yet
+                  <div className="mt-1 text-xs">
+                    When your landlord issues an invoice, it’ll show up here with its
+                    status and due date.
+                  </div>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {rows.map((inv) => {
-                const badgeClass =
-                  (inv.status ?? "").toLowerCase() === "paid"
-                    ? "bg-emerald-100 text-emerald-800"
-                    : (inv.status ?? "").toLowerCase() === "overdue"
-                    ? "bg-red-100 text-red-800"
-                    : "bg-gray-100 text-gray-800";
+            ) : (
+              (rows || []).map((inv: any) => {
+                const issued =
+                  inv.issued_at ? new Date(inv.issued_at).toDateString() : "—";
+                const due = inv.due_date ? new Date(inv.due_date).toDateString() : "—";
+                const amount =
+                  typeof inv.total_amount === "number" ? inv.total_amount : 0;
+                const badgeClasses =
+                  inv.status === "paid"
+                    ? "bg-green-50 text-green-800 border-green-200"
+                    : inv.status === "overdue"
+                    ? "bg-red-50 text-red-800 border-red-200"
+                    : inv.status === "issued"
+                    ? "bg-blue-50 text-blue-800 border-blue-200"
+                    : inv.status === "void"
+                    ? "bg-gray-50 text-gray-700 border-gray-200"
+                    : "bg-yellow-50 text-yellow-800 border-yellow-200";
+
+                const backQS = encodeURIComponent(currentQS);
+                const detailHref = `/tenant/invoices/${inv.id}?from=${backQS}`;
 
                 return (
-                  <tr
-                    key={inv.id}
-                    className="border-t hover:bg-gray-50/70"
-                  >
-                    <td className="px-4 py-3">
-                      <div className="font-medium">
-                        {inv.number ?? inv.id.slice(0, 8).toUpperCase()}
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        {inv.description ?? "—"}
-                      </div>
+                  <tr key={inv.id} className="border-t hover:bg-gray-50">
+                    <td className="px-4 py-2 align-top">
+                      <Link
+                        href={detailHref}
+                        className="text-blue-600 hover:underline"
+                      >
+                        {inv.number || inv.id.slice(0, 8)}
+                      </Link>
                     </td>
-                    <td className="px-4 py-3">
-                      <span className={`rounded-full px-2 py-1 text-xs ${badgeClass}`}>
-                        {(inv.status ?? "—").toUpperCase()}
+                    <td className="px-4 py-2 align-top">
+                      <div className="line-clamp-2 max-w-xs">{inv.description}</div>
+                    </td>
+                    <td className="px-4 py-2 align-top">
+                      <span className={`inline-block rounded-full border px-2 py-0.5 text-xs ${badgeClasses}`}>
+                        {String(inv.status || "").toUpperCase()}
                       </span>
                     </td>
-                    <td className="px-4 py-3">{fmtDate(inv.issued_at)}</td>
-                    <td className="px-4 py-3">{fmtDate(inv.due_date)}</td>
-                    <td className="px-4 py-3 text-right">
-                      {(typeof inv.total_amount === "number"
-                        ? inv.total_amount
-                        : 0
-                      ).toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}{" "}
-                      {(inv.currency ?? "PKR").toUpperCase()}
-                    </td>
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-4 py-2 text-right align-top">{amount}</td>
+                    <td className="px-4 py-2 align-top">{inv.currency || "PKR"}</td>
+                    <td className="px-4 py-2 align-top">{issued}</td>
+                    <td className="px-4 py-2 align-top">{due}</td>
+                    <td className="px-4 py-2 align-top text-right">
                       <Link
-                        href={`/tenant/invoices/${inv.id}`}
-                        className="rounded-xl border px-3 py-1.5 text-xs hover:bg-gray-50"
+                        href={detailHref}
+                        className="rounded-xl border px-2 py-1 text-xs hover:bg-gray-50"
                       >
                         View
                       </Link>
                     </td>
                   </tr>
                 );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
 
       {/* Pager */}
-      <div className="mt-4 flex items-center justify-between text-sm">
-        <div className="text-gray-600">
-          Page {page} of {totalPages} · {total.toLocaleString()} total
+      <div className="mt-4 flex items-center justify-between">
+        <div className="text-xs text-gray-500">
+          Page {page} of {totalPages}
         </div>
         <div className="flex items-center gap-2">
-          <Link
-            aria-disabled={page <= 1}
-            href={
-              page <= 1
-                ? qp("/tenant/invoices", { ...baseParams, page: 1 })
-                : qp("/tenant/invoices", { ...baseParams, page: page - 1 })
-            }
-            className={`rounded-xl border px-3 py-1.5 ${
-              page <= 1 ? "pointer-events-none opacity-40" : "hover:bg-gray-50"
-            }`}
-          >
-            ← Prev
-          </Link>
-          <Link
-            aria-disabled={page >= totalPages}
-            href={
-              page >= totalPages
-                ? qp("/tenant/invoices", { ...baseParams, page: totalPages })
-                : qp("/tenant/invoices", { ...baseParams, page: page + 1 })
-            }
-            className={`rounded-xl border px-3 py-1.5 ${
-              page >= totalPages
-                ? "pointer-events-none opacity-40"
-                : "hover:bg-gray-50"
-            }`}
-          >
-            Next →
-          </Link>
+          {page > 1 ? (
+            <Link
+              href={`/tenant/invoices?${buildQS(searchParams, { p: String(page - 1) })}`}
+              className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
+            >
+              ← Prev
+            </Link>
+          ) : (
+            <span className="cursor-not-allowed rounded-xl border px-3 py-2 text-sm opacity-50">
+              ← Prev
+            </span>
+          )}
+          {page < totalPages ? (
+            <Link
+              href={`/tenant/invoices?${buildQS(searchParams, { p: String(page + 1) })}`}
+              className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
+            >
+              Next →
+            </Link>
+          ) : (
+            <span className="cursor-not-allowed rounded-xl border px-3 py-2 text-sm opacity-50">
+              Next →
+            </span>
+          )}
         </div>
       </div>
     </div>
