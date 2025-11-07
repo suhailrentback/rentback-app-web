@@ -4,99 +4,103 @@ import { createRouteSupabase } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
-// Only allow sorting by these columns to avoid SQL injection via query params
-const ALLOWED_SORT = new Set([
-  "issued_at",
-  "due_date",
-  "total_amount",
-  "number",
-  "status",
-]);
+type Row = {
+  id: string;
+  number: string | null;
+  description: string | null;
+  status: string | null;
+  total_amount: number | null;
+  amount_cents: number | null;
+  currency: string | null;
+  issued_at: string | null;
+  due_date: string | null;
+};
 
-function toInt(input: string | null, def: number, min: number, max: number) {
-  const n = Number.parseInt(String(input ?? ""), 10);
-  if (Number.isNaN(n)) return def;
-  return Math.min(max, Math.max(min, n));
-}
+const ALLOWED_SORT = ["issued_at", "due_date"] as const;
 
-function csvEscape(val: unknown) {
-  if (val === null || val === undefined) return "";
-  const s = String(val);
-  if (s.includes('"') || s.includes(",") || s.includes("\n")) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
+function csvEscape(v: unknown): string {
+  const s = v == null ? "" : String(v);
+  // Quote if contains comma, quote, or newline. Double-up inner quotes.
+  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 }
 
 export async function GET(req: Request) {
   const supabase = createRouteSupabase();
   const url = new URL(req.url);
-  const sp = url.searchParams;
+  const q = (url.searchParams.get("q") || "").trim();
+  const st = (url.searchParams.get("st") || "").trim().toLowerCase();
+  const sortRaw = (url.searchParams.get("sort") || "issued_at").trim();
+  const sort = (ALLOWED_SORT as readonly string[]).includes(sortRaw) ? sortRaw : "issued_at";
+  const dir = (url.searchParams.get("dir") || "desc").toLowerCase() === "asc" ? "asc" : "desc";
 
-  const q = sp.get("q")?.trim() || "";
-  const status = sp.get("status")?.trim().toLowerCase() || "";
-  const sortParam = (sp.get("sort") || "issued_at").trim();
-  const sort = ALLOWED_SORT.has(sortParam) ? sortParam : "issued_at";
-  const dir = sp.get("dir") === "asc" ? "asc" : "desc";
-
-  // Large default to export “everything in view” without pagination surprises
-  const page = toInt(sp.get("page"), 1, 1, 1000000);
-  const per = toInt(sp.get("per"), 2000, 1, 5000);
-  const from = (page - 1) * per;
-  const to = from + per - 1;
-
+  // Build query (RLS will scope to the logged-in tenant)
   let query = supabase
     .from("invoices")
     .select(
-      "id, number, status, issued_at, due_date, total_amount, amount_cents, currency, description",
-      { count: "exact" }
+      "id, number, description, status, total_amount, amount_cents, currency, issued_at, due_date"
     )
-    .order(sort as any, { ascending: dir === "asc", nullsFirst: true })
-    .range(from, to);
-
-  if (status && ["open", "paid", "overdue", "issued", "draft", "unpaid"].includes(status)) {
-    query = query.eq("status", status);
-  }
+    .order(sort, { ascending: dir === "asc" })
+    .range(0, 4999); // export up to 5k rows safely
 
   if (q) {
-    // Search by number OR description
     query = query.or(`number.ilike.%${q}%,description.ilike.%${q}%`);
+  }
+  if (st) {
+    query = query.eq("status", st);
   }
 
   const { data, error } = await query;
-
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: "Export failed" }, { status: 500 });
   }
 
-  const header = "id,number,status,issued_at,due_date,total_amount,currency,description";
-  const rows = (data ?? []).map((row: any) => {
-    const total =
-      typeof row.total_amount === "number"
-        ? row.total_amount
-        : typeof row.amount_cents === "number"
-        ? Math.round(row.amount_cents) / 100
-        : "";
-    return [
-      row.id,
-      row.number ?? "",
-      String(row.status ?? "").toUpperCase(),
-      row.issued_at ?? "",
-      row.due_date ?? "",
-      total,
-      (row.currency ?? "").toUpperCase(),
-      row.description ?? "",
-    ]
-      .map(csvEscape)
-      .join(",");
-  });
+  const rows = (data ?? []) as Row[];
 
-  const csv = [header, ...rows].join("\n");
+  const header = [
+    "Invoice ID",
+    "Number",
+    "Description",
+    "Status",
+    "Amount",
+    "Currency",
+    "Issued",
+    "Due",
+  ];
+
+  const lines = [header.map(csvEscape).join(",")];
+
+  for (const r of rows) {
+    const amount =
+      typeof r.total_amount === "number"
+        ? r.total_amount
+        : typeof r.amount_cents === "number"
+        ? Math.round(r.amount_cents) / 100
+        : 0;
+
+    lines.push(
+      [
+        r.id,
+        r.number ?? "",
+        r.description ?? "",
+        (r.status ?? "").toUpperCase(),
+        amount,
+        (r.currency ?? "PKR").toUpperCase(),
+        r.issued_at ? new Date(r.issued_at).toISOString() : "",
+        r.due_date ? new Date(r.due_date).toISOString() : "",
+      ]
+        .map(csvEscape)
+        .join(",")
+    );
+  }
+
+  const csv = lines.join("\n");
+  const ymd = new Date().toISOString().slice(0, 10);
 
   return new NextResponse(csv, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="tenant-invoices.csv"`,
+      "Content-Disposition": `attachment; filename="invoices-${ymd}.csv"`,
       "Cache-Control": "no-store",
     },
   });
