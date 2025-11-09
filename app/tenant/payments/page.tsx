@@ -1,92 +1,119 @@
 // app/tenant/payments/page.tsx
-import Link from "next/link";
-import { createRouteSupabase } from "@/lib/supabase/server";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import { createServerClient } from "@supabase/ssr";
 
-export const dynamic = "force-dynamic";
+type Profile = {
+  id: string;
+  email: string | null;
+  role: "tenant" | "landlord" | "staff" | "admin";
+};
 
 type PaymentRow = {
   id: string;
   invoice_id: string | null;
   amount_cents: number | null;
   currency: string | null;
-  status: string;
-  paid_at: string | null;
-  created_at: string | null;
+  reference: string | null;
+  status: "submitted" | "confirmed" | "rejected" | "pending" | "failed";
+  created_at: string;
 };
 
+function getSupabaseServer() {
+  const store = cookies();
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return store.get(name)?.value;
+        },
+        set() {},
+        remove() {},
+      },
+    }
+  );
+}
+
 export default async function TenantPaymentsPage() {
-  const supabase = createRouteSupabase();
+  const supabase = getSupabaseServer();
 
-  // Tenant can read own payments by RLS policy
-  const { data, error } = await supabase
-    .from("payments")
-    .select("id, invoice_id, amount_cents, currency, status, paid_at, created_at")
-    .order("created_at", { ascending: false })
-    .limit(100);
+  // Guard: must be signed in
+  const { data: userResp } = await supabase.auth.getUser();
+  const user = userResp?.user;
+  if (!user) redirect("/sign-in");
 
-  const payments = (data ?? []) as PaymentRow[];
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("id, role, email")
+    .eq("id", user.id)
+    .maybeSingle<Profile>();
+
+  // Attempt to load payments scoped to this tenant.
+  // NOTE: If the `payments` table isn’t present yet or RLS denies, we degrade gracefully.
+  let payments: PaymentRow[] = [];
+  let pErr: any = null;
+
+  try {
+    const { data, error } = await supabase
+      .from("payments")
+      .select(
+        "id, invoice_id, amount_cents, currency, reference, status, created_at"
+      )
+      .eq("tenant_id", profile?.id ?? "__none__")
+      .order("created_at", { ascending: false })
+      .limit(50)
+      .returns<PaymentRow[]>();
+    payments = data ?? [];
+    pErr = error ?? null;
+  } catch (e: any) {
+    pErr = e;
+  }
+
+  const blocked =
+    pErr && (pErr.code === "42501" || pErr.message?.includes("permission"));
 
   return (
     <div className="mx-auto max-w-3xl p-6">
-      <div className="mb-4 flex items-center justify-between">
-        <Link href="/tenant" className="text-sm underline">
-          ← Back to dashboard
-        </Link>
-        <Link href="/sign-out" className="text-sm underline">
-          Sign out
-        </Link>
-      </div>
+      <h1 className="text-xl font-semibold">My Payments</h1>
 
-      <h1 className="mb-2 text-xl font-semibold">My Payments</h1>
-      <p className="mb-6 text-sm text-gray-600">
-        Read-only list of your payments (latest first).
-      </p>
-
-      {error ? (
-        <p className="text-sm text-red-600">Error loading payments: {String(error.message ?? "Unknown error")}</p>
+      {blocked ? (
+        <p className="mt-2 text-sm text-gray-600">
+          Payments history will appear here once access is enabled.
+        </p>
       ) : payments.length === 0 ? (
-        <div className="rounded-2xl border p-6 text-sm text-gray-600">
-          No payments yet.
-        </div>
+        <p className="mt-2 text-sm text-gray-600">No payments yet.</p>
       ) : (
-        <div className="overflow-x-auto rounded-2xl border">
-          <table className="min-w-full text-left text-sm">
-            <thead className="bg-gray-50">
+        <div className="mt-4 overflow-hidden rounded-2xl border">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-left">
               <tr>
-                <th className="px-4 py-3 font-medium">Created</th>
-                <th className="px-4 py-3 font-medium">Amount</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium">Paid at</th>
-                <th className="px-4 py-3 font-medium">Invoice</th>
+                <th className="px-3 py-2">Date</th>
+                <th className="px-3 py-2">Reference</th>
+                <th className="px-3 py-2">Amount</th>
+                <th className="px-3 py-2">Status</th>
               </tr>
             </thead>
             <tbody>
               {payments.map((p) => {
-                const amt =
+                const when = new Date(p.created_at).toDateString();
+                const amount =
                   typeof p.amount_cents === "number"
                     ? (p.amount_cents / 100).toFixed(2)
                     : "—";
-                const created = p.created_at ? new Date(p.created_at).toDateString() : "—";
-                const paid = p.paid_at ? new Date(p.paid_at).toDateString() : "—";
+                const ccy = p.currency ?? "";
                 return (
                   <tr key={p.id} className="border-t">
-                    <td className="px-4 py-3">{created}</td>
-                    <td className="px-4 py-3">
-                      {amt} {p.currency ?? "PKR"}
+                    <td className="px-3 py-2">{when}</td>
+                    <td className="px-3 py-2">{p.reference ?? "—"}</td>
+                    <td className="px-3 py-2">
+                      {amount} {ccy}
                     </td>
-                    <td className="px-4 py-3 uppercase">{p.status}</td>
-                    <td className="px-4 py-3">{paid}</td>
-                    <td className="px-4 py-3">
-                      {p.invoice_id ? (
-                        <Link
-                          href={`/tenant/invoices/${p.invoice_id}`}
-                          className="underline"
-                        >
-                          View invoice
-                        </Link>
-                      ) : (
-                        "—"
-                      )}
+                    <td className="px-3 py-2">
+                      <span className="rounded-full border px-2 py-0.5 text-xs">
+                        {p.status.toUpperCase()}
+                      </span>
                     </td>
                   </tr>
                 );
@@ -95,6 +122,10 @@ export default async function TenantPaymentsPage() {
           </table>
         </div>
       )}
+
+      <p className="mt-3 text-xs text-gray-500">
+        Need help? support@rentback.app
+      </p>
     </div>
   );
 }
