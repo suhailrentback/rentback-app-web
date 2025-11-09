@@ -1,75 +1,94 @@
-// rentback-app-web/app/tenant/lease/page.tsx
-'use client';
+// app/tenant/lease/page.tsx
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { createRouteSupabase } from "@/lib/supabase/server";
 
-import { useEffect, useState } from 'react';
-import { getSupabaseBrowser } from '@/lib/supabaseClient';
+export const dynamic = "force-dynamic";
 
-type LeaseRow = {
-  id: string;
-  status: 'ACTIVE'|'ENDED'|'PENDING';
-  start_date: string | null;
-  end_date: string | null;
-  monthly_rent: number;
-  unit: {
-    unit_number: string;
-    property: {
-      name: string | null;
-      address: string | null;
-    } | null;
-  } | null;
-};
+export default async function TenantLeasePage() {
+  const supabase = createRouteSupabase();
 
-export default function LeasePage() {
-  const supabase = getSupabaseBrowser();
-  const [loading, setLoading] = useState(true);
-  const [lease, setLease] = useState<LeaseRow | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [signedIn, setSignedIn] = useState<boolean>(false);
+  // Tenant can read own leases by RLS policy; no joins to properties/units
+  const { data: leases, error } = await supabase
+    .from("leases")
+    .select("id, start_date, end_date, monthly_rent_cents, currency")
+    .order("start_date", { ascending: false })
+    .limit(1);
 
-  useEffect(() => {
-    (async () => {
-      const { data: sess } = await supabase.auth.getSession();
-      setSignedIn(Boolean(sess?.session));
-      if (!sess?.session) {
-        setLoading(false);
-        return;
-      }
-      const { data, error } = await supabase
-        .from('lease')
-        .select(`
-          id, status, start_date, end_date, monthly_rent,
-          unit:unit_id (
-            unit_number,
-            property:property_id ( name, address )
-          )
-        `)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+  if (error) {
+    return (
+      <div className="mx-auto max-w-2xl p-6">
+        <div className="mb-4 flex items-center justify-between">
+          <Link href="/tenant" className="text-sm underline">
+            ← Back to dashboard
+          </Link>
+          <Link href="/sign-out" className="text-sm underline">
+            Sign out
+          </Link>
+        </div>
+        <h1 className="mb-2 text-xl font-semibold">My Lease</h1>
+        <p className="text-sm text-red-600">Error loading lease: {String(error.message ?? "Unknown error")}</p>
+      </div>
+    );
+  }
 
-      if (error) setError(error.message);
-      else setLease(data as unknown as LeaseRow);
-      setLoading(false);
-    })();
-  }, [supabase]);
+  const lease = leases?.[0];
+  if (!lease) {
+    return (
+      <div className="mx-auto max-w-2xl p-6">
+        <div className="mb-4 flex items-center justify-between">
+          <Link href="/tenant" className="text-sm underline">
+            ← Back to dashboard
+          </Link>
+          <Link href="/sign-out" className="text-sm underline">
+            Sign out
+          </Link>
+        </div>
+        <h1 className="mb-2 text-xl font-semibold">My Lease</h1>
+        <p className="text-sm text-gray-500">No active lease found.</p>
+      </div>
+    );
+  }
 
-  if (!signedIn) return <div className="p-6">Please sign in to view your lease.</div>;
-  if (loading) return <div className="p-6">Loading your lease…</div>;
-  if (error) return <div className="p-6 text-red-600">Error: {error}</div>;
-  if (!lease) return <div className="p-6">No lease found.</div>;
+  const start = lease.start_date ? new Date(lease.start_date) : null;
+  const end = lease.end_date ? new Date(lease.end_date) : null;
+  const monthly =
+    typeof lease.monthly_rent_cents === "number"
+      ? (lease.monthly_rent_cents / 100).toFixed(2)
+      : "—";
 
-  const prop = lease.unit?.property;
   return (
-    <div className="p-6 space-y-4">
-      <h1 className="text-2xl font-semibold">My Lease</h1>
-      <div className="rounded-2xl border p-4 grid gap-2">
-        <div><span className="font-medium">Status:</span> {lease.status}</div>
-        <div><span className="font-medium">Start:</span> {lease.start_date ?? '—'}</div>
-        <div><span className="font-medium">End:</span> {lease.end_date ?? '—'}</div>
-        <div><span className="font-medium">Monthly Rent:</span> {lease.monthly_rent}</div>
-        <div><span className="font-medium">Unit:</span> {lease.unit?.unit_number ?? '—'}</div>
-        <div><span className="font-medium">Property:</span> {prop?.name ?? '—'}</div>
-        <div><span className="font-medium">Address:</span> {prop?.address ?? '—'}</div>
+    <div className="mx-auto max-w-2xl p-6">
+      <div className="mb-4 flex items-center justify-between">
+        <Link href="/tenant" className="text-sm underline">
+          ← Back to dashboard
+        </Link>
+        <Link href="/sign-out" className="text-sm underline">
+          Sign out
+        </Link>
+      </div>
+
+      <h1 className="mb-2 text-xl font-semibold">My Lease</h1>
+      <p className="mb-6 text-sm text-gray-600">
+        Read-only details of your current lease.
+      </p>
+
+      <div className="rounded-2xl border p-4">
+        <div className="grid grid-cols-2 gap-3 text-sm">
+          <div className="text-gray-500">Lease ID</div>
+          <div className="font-medium">{lease.id}</div>
+
+          <div className="text-gray-500">Monthly Rent</div>
+          <div className="font-medium">
+            {monthly} {lease.currency ?? "PKR"}
+          </div>
+
+          <div className="text-gray-500">Start</div>
+          <div className="font-medium">{start ? start.toDateString() : "—"}</div>
+
+          <div className="text-gray-500">End</div>
+          <div className="font-medium">{end ? end.toDateString() : "—"}</div>
+        </div>
       </div>
     </div>
   );
