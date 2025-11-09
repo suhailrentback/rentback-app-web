@@ -4,35 +4,43 @@ import { createRouteSupabase } from "@/lib/supabase/server";
 
 export const revalidate = 0;
 
+type InvoiceMini = {
+  id: string;
+  number: string | null;
+  due_date: string | null;
+} | null;
+
 type PaymentRow = {
   id: string;
-  amount_cents: number;
+  amount_cents: number | null;
   currency: string | null;
-  status: "submitted" | "confirmed" | "rejected" | string;
+  status: string;
   reference: string | null;
   created_at: string;
   confirmed_at: string | null;
-  invoice?: {
-    id: string;
-    number: string | null;
-    due_date: string | null;
-  } | null;
+  invoice: InvoiceMini;
 };
 
-function formatMoney(cents: number | null | undefined, currency: string | null | undefined) {
+function formatMoney(
+  cents: number | null | undefined,
+  currency: string | null | undefined
+) {
   const amt = typeof cents === "number" ? cents / 100 : 0;
   const cur = currency || "PKR";
   try {
-    return new Intl.NumberFormat("en-US", { style: "currency", currency: cur }).format(amt);
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: cur,
+    }).format(amt);
   } catch {
-    // Fallback if currency code is unknown on this runtime
     return `${amt.toLocaleString()} ${cur}`;
   }
 }
 
 function StatusBadge({ status }: { status: string }) {
   const s = (status || "").toLowerCase();
-  const base = "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium";
+  const base =
+    "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium";
   const tone =
     s === "confirmed"
       ? "bg-green-100 text-green-800"
@@ -48,7 +56,7 @@ function StatusBadge({ status }: { status: string }) {
 export default async function TenantPaymentsPage() {
   const supabase = createRouteSupabase();
 
-  // RLS will scope rows to the signed-in tenant
+  // RLS scopes payments to the signed-in tenant
   const { data, error } = await supabase
     .from("payments")
     .select(
@@ -70,7 +78,29 @@ export default async function TenantPaymentsPage() {
     .order("created_at", { ascending: false })
     .limit(100);
 
-  const rows = (data as PaymentRow[] | null) || [];
+  // Normalize nested relation: Supabase can return invoice as an array
+  const rows: PaymentRow[] = (data ?? []).map((r: any) => {
+    const inv = Array.isArray(r.invoice)
+      ? r.invoice[0] ?? null
+      : r.invoice ?? null;
+
+    return {
+      id: String(r.id),
+      amount_cents: typeof r.amount_cents === "number" ? r.amount_cents : null,
+      currency: r.currency ?? null,
+      status: r.status ?? "",
+      reference: r.reference ?? null,
+      created_at: r.created_at,
+      confirmed_at: r.confirmed_at ?? null,
+      invoice: inv
+        ? {
+            id: String(inv.id),
+            number: inv.number ?? null,
+            due_date: inv.due_date ?? null,
+          }
+        : null,
+    };
+  });
 
   return (
     <div className="mx-auto w-full max-w-3xl p-4 md:p-6">
@@ -98,11 +128,21 @@ export default async function TenantPaymentsPage() {
           <table className="min-w-full divide-y divide-gray-200 text-sm">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-3 py-2 text-left font-medium text-gray-700">Date</th>
-                <th className="px-3 py-2 text-left font-medium text-gray-700">Invoice</th>
-                <th className="px-3 py-2 text-left font-medium text-gray-700">Reference</th>
-                <th className="px-3 py-2 text-left font-medium text-gray-700">Amount</th>
-                <th className="px-3 py-2 text-left font-medium text-gray-700">Status</th>
+                <th className="px-3 py-2 text-left font-medium text-gray-700">
+                  Date
+                </th>
+                <th className="px-3 py-2 text-left font-medium text-gray-700">
+                  Invoice
+                </th>
+                <th className="px-3 py-2 text-left font-medium text-gray-700">
+                  Reference
+                </th>
+                <th className="px-3 py-2 text-left font-medium text-gray-700">
+                  Amount
+                </th>
+                <th className="px-3 py-2 text-left font-medium text-gray-700">
+                  Status
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 bg-white">
@@ -111,7 +151,7 @@ export default async function TenantPaymentsPage() {
                   ? new Date(p.created_at).toDateString()
                   : "";
                 const amount = formatMoney(p.amount_cents, p.currency);
-                const invNum = p.invoice?.number || "—";
+                const invNum = p.invoice?.number ?? "—";
                 const invLink = p.invoice?.id
                   ? `/tenant/invoices/${p.invoice.id}`
                   : null;
@@ -121,7 +161,10 @@ export default async function TenantPaymentsPage() {
                     <td className="px-3 py-2">{created}</td>
                     <td className="px-3 py-2">
                       {invLink ? (
-                        <Link href={invLink} className="text-blue-600 hover:underline">
+                        <Link
+                          href={invLink}
+                          className="text-blue-600 hover:underline"
+                        >
                           {invNum}
                         </Link>
                       ) : (
