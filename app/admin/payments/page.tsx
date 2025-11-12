@@ -16,7 +16,7 @@ type Row = {
   id: string;
   amount_cents: number | null;
   currency: string | null;
-  status: string; // "submitted" | "confirmed" | etc.
+  status: string;
   reference: string | null;
   created_at: string | null;
   confirmed_at: string | null;
@@ -89,14 +89,23 @@ export default async function AdminPaymentsPage() {
 
   return (
     <div className="mx-auto w-full max-w-4xl p-4 md:p-6">
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">Admin · Payments Queue</h1>
-        <Link
-          href="/landlord"
-          className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
-        >
-          Landlord Home
-        </Link>
+        <div className="flex items-center gap-2">
+          <a
+            href="/admin/api/payments/export"
+            className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
+            title="Download CSV of current payments"
+          >
+            Export CSV
+          </a>
+          <Link
+            href="/landlord"
+            className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
+          >
+            Landlord Home
+          </Link>
+        </div>
       </div>
 
       {rows.length === 0 ? (
@@ -143,7 +152,7 @@ export default async function AdminPaymentsPage() {
                       {r.created_at ? new Date(r.created_at).toDateString() : "—"}
                     </td>
                     <td className="px-3 py-2">
-                      <form action="/app/admin/api/payments/confirm" method="post" className="inline">
+                      <form action="/admin/api/payments/confirm" method="post" className="inline">
                         <input type="hidden" name="paymentId" value={r.id} />
                         <button
                           type="submit"
