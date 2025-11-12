@@ -1,147 +1,167 @@
 // app/admin/payments/page.tsx
-import { createRouteSupabase } from "@/lib/supabase/server";
+import Link from "next/link";
+import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
 
+export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+type InvoiceLite = {
+  id: string;
+  number: string | null;
+  due_date: string | null;
+} | null;
 
 type Row = {
   id: string;
   amount_cents: number | null;
   currency: string | null;
-  status: string | null;
+  status: string; // "submitted" | "confirmed" | etc.
   reference: string | null;
   created_at: string | null;
   confirmed_at: string | null;
-  invoice: { id: string; number: string | null; due_date: string | null } | null;
+  invoice: InvoiceLite;
 };
 
-async function requireStaff() {
-  const sb = createRouteSupabase();
-  const { data: auth } = await sb.auth.getUser();
-  const uid = auth.user?.id ?? null;
-  if (!uid) return null;
-
-  const { data: me } = await sb
-    .from("profiles")
-    .select("id, role, email")
-    .eq("id", uid)
-    .maybeSingle();
-
-  if (!me) return null;
-  if (!["staff", "admin"].includes(String(me.role))) return null;
-
-  return { uid, role: String(me.role), email: String((me as any).email ?? "") };
+function firstInvoice(inv: any): InvoiceLite {
+  if (!inv) return null;
+  if (Array.isArray(inv)) return inv.length ? (inv[0] ?? null) : null;
+  return inv as InvoiceLite;
 }
 
-async function loadSubmitted(): Promise<Row[]> {
-  const sb = createRouteSupabase();
-  const { data } = await sb
+function formatMoney(amount_cents: number | null | undefined, currency: string | null | undefined) {
+  const amt = typeof amount_cents === "number" ? amount_cents : 0;
+  const ccy = currency ?? "PKR";
+  return `${(amt / 100).toLocaleString()} ${ccy}`;
+}
+
+async function getSupabaseServer() {
+  const cookieStore = cookies();
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  return createServerClient(url, anon, {
+    cookies: {
+      get(name: string) {
+        return cookieStore.get(name)?.value;
+      },
+    },
+  });
+}
+
+async function fetchRows(): Promise<Row[]> {
+  const sb = await getSupabaseServer();
+
+  const { data, error } = await sb
     .from("payments")
     .select(
       `
       id, amount_cents, currency, status, reference, created_at, confirmed_at,
-      invoice:invoices (
-        id, number, due_date
-      )
+      invoice:invoices!payments_invoice_id_fkey ( id, number, due_date )
     `
     )
-    .in("status", ["submitted", "confirmed"])
     .order("created_at", { ascending: false })
     .limit(200);
 
-  return (data as Row[]) ?? [];
+  if (error) {
+    console.error("[admin/payments] select error", error);
+    return [];
+  }
+
+  const rows: Row[] = (data ?? []).map((d: any) => {
+    const inv = firstInvoice(d.invoice);
+    return {
+      id: String(d.id),
+      amount_cents: typeof d.amount_cents === "number" ? d.amount_cents : Number(d.amount_cents ?? 0),
+      currency: (d.currency ?? null) as string | null,
+      status: String(d.status ?? ""),
+      reference: (d.reference ?? null) as string | null,
+      created_at: (d.created_at ?? null) as string | null,
+      confirmed_at: (d.confirmed_at ?? null) as string | null,
+      invoice: inv
+    };
+  });
+
+  return rows;
 }
 
 export default async function AdminPaymentsPage() {
-  const staff = await requireStaff();
-  if (!staff) {
-    return (
-      <div className="mx-auto max-w-3xl p-6">
-        <h1 className="text-xl font-semibold">Not permitted</h1>
-        <p className="mt-2 text-sm text-gray-600">
-          This page is for staff/admin only.
-        </p>
-      </div>
-    );
-  }
-
-  const rows = await loadSubmitted();
+  const rows = await fetchRows();
 
   return (
     <div className="mx-auto w-full max-w-4xl p-4 md:p-6">
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Payments — Confirmations</h1>
-        <a
+        <h1 className="text-xl font-semibold">Admin · Payments Queue</h1>
+        <Link
           href="/landlord"
-          className="text-sm text-gray-600 underline hover:text-gray-900"
+          className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
         >
-          Back
-        </a>
+          Landlord Home
+        </Link>
       </div>
 
       {rows.length === 0 ? (
-        <div className="rounded-xl border p-4 text-sm text-gray-600">
-          No submitted payments right now.
+        <div className="rounded-xl border p-6 text-sm text-gray-600">
+          No payments yet.
         </div>
       ) : (
-        <div className="divide-y rounded-xl border">
-          {rows.map((r) => {
-            const amt =
-              typeof r.amount_cents === "number"
-                ? (r.amount_cents / 100).toLocaleString(undefined, {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })
-                : "—";
-            const invLabel = r.invoice
-              ? (r.invoice.number ?? r.invoice.id).toString().slice(0, 24)
-              : "—";
-
-            return (
-              <div key={r.id} className="flex flex-col gap-2 p-4 md:flex-row md:items-center md:justify-between">
-                <div className="space-y-1">
-                  <div className="text-sm font-medium">
-                    {amt} {r.currency ?? "PKR"} • Ref: {r.reference ?? "—"}
-                  </div>
-                  <div className="text-xs text-gray-600">
-                    Invoice: {invLabel}{" "}
-                    {r.invoice?.due_date ? `• Due ${new Date(r.invoice.due_date).toDateString()}` : ""}
-                  </div>
-                  <div className="text-xs text-gray-600">
-                    Status: {(r.status ?? "").toUpperCase()}{" "}
-                    {r.confirmed_at ? `• Confirmed ${new Date(r.confirmed_at).toDateString()}` : ""}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  {String(r.status) === "submitted" ? (
-                    <form method="post" action="/admin/api/payments/confirm">
-                      <input type="hidden" name="paymentId" value={r.id} />
-                      <button
-                        type="submit"
-                        className="rounded-lg border px-3 py-2 text-sm hover:bg-gray-50"
-                      >
-                        Confirm
-                      </button>
-                    </form>
-                  ) : (
-                    <a
-                      href={`/tenant/invoices/${r.invoice?.id ?? ""}`}
-                      className="text-sm text-gray-600 underline hover:text-gray-900"
-                    >
-                      View invoice
-                    </a>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+        <div className="overflow-x-auto rounded-xl border">
+          <table className="min-w-full text-left text-sm">
+            <thead className="border-b bg-gray-50">
+              <tr>
+                <th className="px-3 py-2">Payment</th>
+                <th className="px-3 py-2">Invoice</th>
+                <th className="px-3 py-2">Amount</th>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Reference</th>
+                <th className="px-3 py-2">Created</th>
+                <th className="px-3 py-2">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const invNo = r.invoice?.number ?? "—";
+                const invId = r.invoice?.id ?? null;
+                return (
+                  <tr key={r.id} className="border-b last:border-0">
+                    <td className="px-3 py-2 font-mono text-xs">{r.id.slice(0, 8)}…</td>
+                    <td className="px-3 py-2">
+                      {invId ? (
+                        <Link
+                          href={`/tenant/invoices/${invId}`}
+                          className="underline"
+                        >
+                          {invNo}
+                        </Link>
+                      ) : (
+                        <span className="text-gray-500">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">{formatMoney(r.amount_cents, r.currency)}</td>
+                    <td className="px-3 py-2">{r.status}</td>
+                    <td className="px-3 py-2 font-mono text-xs">{r.reference ?? "—"}</td>
+                    <td className="px-3 py-2">
+                      {r.created_at ? new Date(r.created_at).toDateString() : "—"}
+                    </td>
+                    <td className="px-3 py-2">
+                      <form action="/app/admin/api/payments/confirm" method="post" className="inline">
+                        <input type="hidden" name="paymentId" value={r.id} />
+                        <button
+                          type="submit"
+                          disabled={r.status !== "submitted"}
+                          className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50"
+                          title={r.status !== "submitted" ? "Only submitted payments can be confirmed" : "Confirm payment"}
+                        >
+                          Confirm
+                        </button>
+                      </form>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
-
-      <div className="mt-4 text-xs text-gray-500">
-        Confirming sets payment to <b>CONFIRMED</b> and marks the invoice <b>PAID</b>.
-        Receipts & emails ship in the next step.
-      </div>
     </div>
   );
 }
