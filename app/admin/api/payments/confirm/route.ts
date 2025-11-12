@@ -20,12 +20,12 @@ async function requireStaff(sb: ReturnType<typeof createRouteSupabase>) {
     .maybeSingle();
 
   if (!me) return null;
-  if (!["staff", "admin"].includes(String(me.role))) return null;
+  if (!["staff", "admin"].includes(String((me as any).role))) return null;
 
-  return { uid, role: String(me.role), email: String((me as any).email ?? "") };
+  return { uid, role: String((me as any).role), email: String((me as any).email ?? "") };
 }
 
-// Email sender (no-op if keys absent). We just send a link, not an attachment.
+// Optional email sender — no-op to keep zero-deps & zero-risk
 async function sendReceiptEmail(opts: {
   to: string;
   tenantName?: string | null;
@@ -34,15 +34,35 @@ async function sendReceiptEmail(opts: {
   siteUrl: string;
 }) {
   const { to, tenantName, invoiceId, invoiceNumber, siteUrl } = opts;
-  // If you later wire an email provider, do it here.
-  // For now, this is a safe no-op to avoid build errors.
-  console.log(
-    "[email] Would send receipt link to:",
+  console.log("[email] Would send receipt link →", {
     to,
-    "invoice:",
-    invoiceNumber ?? invoiceId
-  );
+    tenantName,
+    invoiceId,
+    invoiceNumber,
+    siteUrl,
+  });
   return { ok: true as const };
+}
+
+type InvoiceEmbed =
+  | { id: string; number: string | null; tenant_id: string | null; status: string | null }
+  | null;
+
+type PaymentRow = {
+  id: string;
+  status: string;
+  amount_cents: number | null;
+  currency: string | null;
+  tenant_id: string | null;
+  invoice_id: string | null;
+  // Supabase may return embedded relations as an array; normalize later
+  invoice?: InvoiceEmbed | InvoiceEmbed[] | null;
+};
+
+function firstInvoice(inv: PaymentRow["invoice"]): InvoiceEmbed {
+  if (!inv) return null;
+  if (Array.isArray(inv)) return inv.length ? inv[0] ?? null : null;
+  return inv;
 }
 
 export async function POST(req: Request) {
@@ -51,7 +71,7 @@ export async function POST(req: Request) {
   // Staff/auth check
   const staff = await requireStaff(sb);
   if (!staff) {
-    return NextResponse.json({ error: "Not permitted" }, { status: 403 });
+    return NextResponse.json({ error: "not_permitted" }, { status: 403 });
   }
 
   // Parse form data
@@ -61,7 +81,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "invalid_payload" }, { status: 400 });
   }
 
-  // Load payment with its invoice
+  // Load payment with its invoice (embedded)
   const { data: payment, error: payErr } = await sb
     .from("payments")
     .select(
@@ -76,12 +96,15 @@ export async function POST(req: Request) {
   if (payErr || !payment) {
     return NextResponse.json({ error: "payment_not_found" }, { status: 404 });
   }
-  if (String(payment.status) !== "submitted") {
-    // Idempotent-ish: treat already confirmed as success
+
+  if (String((payment as PaymentRow).status) !== "submitted") {
+    // idempotent-ish: if already confirmed, just bounce back as OK
     const url = new URL("/admin/payments?ok=1", req.url);
     return NextResponse.redirect(url, 303);
   }
-  if (!payment.invoice || !payment.invoice.id) {
+
+  const inv = firstInvoice((payment as PaymentRow).invoice);
+  if (!inv || !inv.id) {
     return NextResponse.json({ error: "invoice_not_found" }, { status: 400 });
   }
 
@@ -98,60 +121,51 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "update_payment_failed" }, { status: 500 });
   }
 
-  // 2) Mark invoice PAID (only if not already)
-  const { error: updInvErr } = await sb
-    .from("invoices")
-    .update({ status: "paid" })
-    .eq("id", payment.invoice.id);
-
+  // 2) Mark invoice PAID
+  const { error: updInvErr } = await sb.from("invoices").update({ status: "paid" }).eq("id", inv.id);
   if (updInvErr) {
     return NextResponse.json({ error: "update_invoice_failed" }, { status: 500 });
   }
 
   // 3) Insert receipt row
-  // Receipts table columns assumed: id (uuid default), invoice_id, payment_id,
-  // tenant_id, amount_cents, currency, created_at default now()
+  const p = payment as PaymentRow;
+  const amount =
+    typeof p.amount_cents === "number" ? p.amount_cents : Number(p.amount_cents ?? 0);
+  const currency = p.currency ?? "PKR";
+
   const { error: insRecErr } = await sb.from("receipts").insert({
-    invoice_id: payment.invoice.id,
+    invoice_id: inv.id,
     payment_id: String(paymentId),
-    tenant_id: payment.tenant_id ?? payment.invoice.tenant_id ?? null,
-    amount_cents:
-      typeof payment.amount_cents === "number"
-        ? payment.amount_cents
-        : Number(payment.amount_cents ?? 0),
-    currency: payment.currency ?? "PKR",
+    tenant_id: p.tenant_id ?? inv.tenant_id ?? null,
+    amount_cents: amount,
+    currency,
   });
 
   if (insRecErr) {
     return NextResponse.json({ error: "insert_receipt_failed" }, { status: 500 });
   }
 
-  // 4) (Best-effort) Email the tenant a link to their receipt
-  // Find tenant email from profiles
-  let tenantEmail: string | null = null;
-  const tenantId = payment.tenant_id ?? payment.invoice.tenant_id ?? null;
-  if (tenantId) {
+  // 4) Best-effort email with links
+  const siteUrl = process.env.SITE_URL || "https://www.rentback.app";
+  if (p.tenant_id) {
     const { data: tenant } = await sb
       .from("profiles")
       .select("email, full_name")
-      .eq("id", tenantId)
+      .eq("id", p.tenant_id)
       .maybeSingle();
 
-    tenantEmail = (tenant?.email as string) ?? null;
-
-    const siteUrl = process.env.SITE_URL || "https://www.rentback.app";
-    if (tenantEmail) {
+    const to = (tenant?.email as string) ?? null;
+    if (to) {
       await sendReceiptEmail({
-        to: tenantEmail,
+        to,
         tenantName: (tenant?.full_name as string) ?? null,
-        invoiceId: payment.invoice.id,
-        invoiceNumber: payment.invoice.number ?? null,
+        invoiceId: inv.id,
+        invoiceNumber: inv.number ?? null,
         siteUrl,
       });
     }
   }
 
-  // Redirect back to the admin payments queue
   const url = new URL("/admin/payments?ok=1", req.url);
   return NextResponse.redirect(url, 303);
 }
