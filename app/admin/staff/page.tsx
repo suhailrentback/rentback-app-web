@@ -1,10 +1,9 @@
 // app/admin/staff/page.tsx
 import { createRouteSupabase } from "@/lib/supabase/server";
-import { revalidatePath } from "next/cache";
 import Link from "next/link";
+import { setRoleAction } from "./actions";
 
 type Role = "tenant" | "landlord" | "staff" | "admin";
-const ROLES: Role[] = ["tenant", "landlord", "staff", "admin"];
 
 async function requireStaffOrAdmin() {
   const supabase = createRouteSupabase();
@@ -110,41 +109,7 @@ export default async function StaffRolesPage() {
   );
 }
 
-/** SERVER ACTION (same file, safe for Next 14) */
-export async function setRoleAction(formData: FormData) {
-  "use server";
-  const supabase = createRouteSupabase();
-
-  // Enforce requester is staff/admin
-  const { data: auth } = await supabase.auth.getUser();
-  if (!auth?.user) return { ok: false, error: "not_signed_in" };
-
-  const { data: me } = await supabase
-    .from("profiles")
-    .select("id, role")
-    .eq("id", auth.user.id)
-    .maybeSingle();
-  if (!me || (me.role !== "staff" && me.role !== "admin"))
-    return { ok: false, error: "forbidden" };
-
-  const userId = String(formData.get("userId") ?? "");
-  const newRole = String(formData.get("newRole") ?? "") as Role;
-  if (!userId || !ROLES.includes(newRole)) {
-    return { ok: false, error: "invalid_input" };
-  }
-
-  const { error } = await supabase
-    .from("profiles")
-    .update({ role: newRole })
-    .eq("id", userId);
-
-  if (error) return { ok: false, error: error.message };
-
-  revalidatePath("/admin/staff");
-  return { ok: true };
-}
-
-/** Small server component wrapper that renders a form per role action */
+/** Server component form that posts to the server action */
 function RoleForm(props: { userId: string; newRole: Role; current: string }) {
   const label =
     props.newRole === "tenant"
@@ -156,11 +121,8 @@ function RoleForm(props: { userId: string; newRole: Role; current: string }) {
       : "Promote ADMIN";
 
   const subtle =
-    props.current === props.newRole
-      ? "opacity-60 cursor-default"
-      : "";
+    props.current === props.newRole ? "opacity-60 cursor-default" : "";
 
-  // Server component forms can submit to server actions directly
   return (
     <form action={setRoleAction}>
       <input type="hidden" name="userId" value={props.userId} />
