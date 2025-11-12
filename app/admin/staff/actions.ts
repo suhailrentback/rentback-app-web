@@ -7,37 +7,54 @@ import { revalidatePath } from "next/cache";
 type Role = "tenant" | "landlord" | "staff" | "admin";
 const ROLES: Role[] = ["tenant", "landlord", "staff", "admin"];
 
-export async function setRoleAction(formData: FormData) {
-  const supabase = createRouteSupabase();
+/**
+ * Server Action for the staff page.
+ * IMPORTANT: must return Promise<void> for <form action={...}> to typecheck.
+ */
+export async function setRoleAction(formData: FormData): Promise<void> {
+  try {
+    const supabase = createRouteSupabase();
 
-  // Enforce requester is staff/admin
-  const { data: auth } = await supabase.auth.getUser();
-  if (!auth?.user) return { ok: false, error: "not_signed_in" };
+    // Enforce requester is staff/admin
+    const { data: auth } = await supabase.auth.getUser();
+    if (!auth?.user) {
+      // Not signed in — silently no-op
+      return;
+    }
 
-  const { data: me } = await supabase
-    .from("profiles")
-    .select("id, role")
-    .eq("id", auth.user.id)
-    .maybeSingle();
+    const { data: me } = await supabase
+      .from("profiles")
+      .select("id, role")
+      .eq("id", auth.user.id)
+      .maybeSingle();
 
-  if (!me || (me.role !== "staff" && me.role !== "admin")) {
-    return { ok: false, error: "forbidden" };
+    if (!me || (me.role !== "staff" && me.role !== "admin")) {
+      // Forbidden — silently no-op
+      return;
+    }
+
+    const userId = String(formData.get("userId") ?? "");
+    const newRole = String(formData.get("newRole") ?? "") as Role;
+
+    if (!userId || !ROLES.includes(newRole)) {
+      // Invalid input — silently no-op
+      return;
+    }
+
+    // Update role
+    const { error } = await supabase
+      .from("profiles")
+      .update({ role: newRole })
+      .eq("id", userId);
+
+    if (error) {
+      // Log on server, but still return void
+      console.error("setRoleAction update error:", error.message);
+    }
+  } catch (e) {
+    console.error("setRoleAction failed:", e);
+  } finally {
+    // Refresh the page data regardless
+    revalidatePath("/admin/staff");
   }
-
-  const userId = String(formData.get("userId") ?? "");
-  const newRole = String(formData.get("newRole") ?? "") as Role;
-
-  if (!userId || !ROLES.includes(newRole)) {
-    return { ok: false, error: "invalid_input" };
-  }
-
-  const { error } = await supabase
-    .from("profiles")
-    .update({ role: newRole })
-    .eq("id", userId);
-
-  if (error) return { ok: false, error: error.message };
-
-  revalidatePath("/admin/staff");
-  return { ok: true };
 }
