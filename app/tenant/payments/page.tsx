@@ -71,7 +71,9 @@ function keepParams(base: string, params: URLSearchParams, overrides: Record<str
   return q ? `${base}?${q}` : base;
 }
 
-async function fetchPayments(searchParams: SearchParams): Promise<{ rows: PaymentRow[]; hasNext: boolean; page: number }> {
+async function fetchPayments(
+  searchParams: SearchParams
+): Promise<{ rows: PaymentRow[]; hasNext: boolean; page: number }> {
   const cookieStore = cookies();
   const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON, {
     cookies: {
@@ -88,7 +90,6 @@ async function fetchPayments(searchParams: SearchParams): Promise<{ rows: Paymen
   const page = Math.max(1, parseInt((Array.isArray(searchParams.page) ? searchParams.page[0] : searchParams.page) || "1", 10));
 
   const createdFromISO = toISODateOrUndefined(searchParams.from as string | undefined);
-  // If "to" was provided as a date (yyyy-mm-dd), include that full day by bumping to 23:59:59
   let createdToISO: string | undefined;
   if (searchParams.to) {
     const raw = Array.isArray(searchParams.to) ? searchParams.to[0] : searchParams.to;
@@ -102,10 +103,9 @@ async function fetchPayments(searchParams: SearchParams): Promise<{ rows: Paymen
   // Build query
   let query = supabase
     .from("payments")
-    .select(
-      "id, tenant_id, invoice_id, amount_cents, currency, status, reference, created_at, confirmed_at",
-      { count: "exact" }
-    );
+    .select("id, tenant_id, invoice_id, amount_cents, currency, status, reference, created_at, confirmed_at", {
+      count: "exact",
+    });
 
   if (status === "confirmed") query = query.eq("status", "confirmed");
   if (status === "pending") query = query.eq("status", "pending");
@@ -126,29 +126,22 @@ async function fetchPayments(searchParams: SearchParams): Promise<{ rows: Paymen
 
   const { data, error } = await query;
   if (error) {
-    // If RLS forbids or error occurs, return empty list (page handles the message)
     return { rows: [], hasNext: false, page };
   }
 
   const rowsDb = (data ?? []) as unknown as PaymentDbRow[];
 
   // Collect invoice ids for a second fetch
-  const invIds = Array.from(new Set(rowsDb.map(r => r.invoice_id).filter(Boolean))) as string[];
-  let invMap = new Map<string, InvoiceLite>();
+  const invIds = Array.from(new Set(rowsDb.map((r) => r.invoice_id).filter(Boolean))) as string[];
+  const invMap = new Map<string, InvoiceLite>();
   if (invIds.length > 0) {
-    const { data: invs, error: invErr } = await supabase
-      .from("invoices")
-      .select("id, number, due_date")
-      .in("id", invIds);
-
-    if (!invErr && invs) {
-      for (const inv of invs as any[]) {
-        invMap.set(String(inv.id), {
-          id: String(inv.id),
-          number: inv.number ?? null,
-          due_date: inv.due_date ?? null,
-        });
-      }
+    const { data: invs } = await supabase.from("invoices").select("id, number, due_date").in("id", invIds);
+    for (const inv of (invs as any[]) ?? []) {
+      invMap.set(String(inv.id), {
+        id: String(inv.id),
+        number: inv.number ?? null,
+        due_date: inv.due_date ?? null,
+      });
     }
   }
 
@@ -191,7 +184,6 @@ export default async function TenantPaymentsPage({ searchParams }: { searchParam
 
       {/* Filters */}
       <form method="GET" className="mb-4 grid grid-cols-1 gap-2 rounded-xl border p-3 md:grid-cols-6">
-        {/* status */}
         <div className="md:col-span-2">
           <label className="block text-xs font-medium">Status</label>
           <select
@@ -205,7 +197,6 @@ export default async function TenantPaymentsPage({ searchParams }: { searchParam
           </select>
         </div>
 
-        {/* from */}
         <div className="md:col-span-2">
           <label className="block text-xs font-medium">From (date)</label>
           <input
@@ -216,7 +207,6 @@ export default async function TenantPaymentsPage({ searchParams }: { searchParam
           />
         </div>
 
-        {/* to */}
         <div className="md:col-span-2">
           <label className="block text-xs font-medium">To (date)</label>
           <input
@@ -227,7 +217,6 @@ export default async function TenantPaymentsPage({ searchParams }: { searchParam
           />
         </div>
 
-        {/* q */}
         <div className="md:col-span-3">
           <label className="block text-xs font-medium">Search (reference)</label>
           <input
@@ -239,7 +228,6 @@ export default async function TenantPaymentsPage({ searchParams }: { searchParam
           />
         </div>
 
-        {/* sort */}
         <div className="md:col-span-2">
           <label className="block text-xs font-medium">Sort</label>
           <select
@@ -254,7 +242,6 @@ export default async function TenantPaymentsPage({ searchParams }: { searchParam
           </select>
         </div>
 
-        {/* submit */}
         <div className="md:col-span-1 flex items-end">
           <button className="w-full rounded-xl border px-3 py-2 text-sm hover:bg-gray-50">Apply</button>
         </div>
@@ -272,23 +259,28 @@ export default async function TenantPaymentsPage({ searchParams }: { searchParam
         <div className="space-y-3">
           {rows.map((p) => {
             const isConfirmed = String(p.status).toLowerCase() === "confirmed";
-            const invLink = p.invoice?.id ? `/tenant/invoices/${p.invoice.id}` : undefined;
+            const invId = p.invoice?.id;
+            const invNumber = p.invoice?.number ?? undefined;
+            const invLink = invId ? `/tenant/invoices/${invId}` : undefined;
+            const invoicePdfHref = invId ? `/api/tenant/invoices/${invId}/pdf` : undefined;
+            const receiptPdfHref = isConfirmed && invId ? `/api/tenant/invoices/${invId}/receipt` : undefined;
+
             return (
               <div key={p.id} className="rounded-xl border p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="text-sm">
                     <div className="font-medium">
                       {fmtMoney(p.amount_cents, p.currency)}
-                      {p.invoice?.number ? (
+                      {invNumber ? (
                         <>
                           {" "}
                           · Invoice{" "}
                           {invLink ? (
                             <Link className="underline hover:no-underline" href={invLink}>
-                              {p.invoice.number}
+                              {invNumber}
                             </Link>
                           ) : (
-                            p.invoice.number
+                            invNumber
                           )}
                         </>
                       ) : null}
@@ -308,6 +300,31 @@ export default async function TenantPaymentsPage({ searchParams }: { searchParam
                     </span>
                   </div>
                 </div>
+
+                {/* Action chips */}
+                <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                  {invoicePdfHref ? (
+                    <a
+                      href={invoicePdfHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded-full border px-3 py-1 hover:bg-gray-50"
+                    >
+                      Download invoice (PDF)
+                    </a>
+                  ) : null}
+                  {receiptPdfHref ? (
+                    <a
+                      href={receiptPdfHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded-full border px-3 py-1 hover:bg-gray-50"
+                    >
+                      Download receipt (PDF)
+                    </a>
+                  ) : null}
+                </div>
+
                 {isConfirmed && p.confirmed_at ? (
                   <div className="mt-1 text-xs text-gray-600">
                     Confirmed on {new Date(p.confirmed_at).toDateString()}
@@ -324,7 +341,9 @@ export default async function TenantPaymentsPage({ searchParams }: { searchParam
         <Link
           href={prevHref}
           aria-disabled={page <= 1}
-          className={`rounded-xl border px-3 py-2 text-sm ${page <= 1 ? "pointer-events-none opacity-50" : "hover:bg-gray-50"}`}
+          className={`rounded-xl border px-3 py-2 text-sm ${
+            page <= 1 ? "pointer-events-none opacity-50" : "hover:bg-gray-50"
+          }`}
         >
           ← Prev
         </Link>
@@ -332,7 +351,9 @@ export default async function TenantPaymentsPage({ searchParams }: { searchParam
         <Link
           href={nextHref}
           aria-disabled={!hasNext}
-          className={`rounded-xl border px-3 py-2 text-sm ${!hasNext ? "pointer-events-none opacity-50" : "hover:bg-gray-50"}`}
+          className={`rounded-xl border px-3 py-2 text-sm ${
+            !hasNext ? "pointer-events-none opacity-50" : "hover:bg-gray-50"
+          }`}
         >
           Next →
         </Link>
