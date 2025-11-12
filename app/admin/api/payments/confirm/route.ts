@@ -3,159 +3,102 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 
-export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const SITE_URL = process.env.SITE_URL || "https://www.rentback.app";
-
-function makeReceiptNumber(): string {
-  return "RCPT-" + Math.random().toString(36).slice(2, 10).toUpperCase();
-}
 
 export async function POST(req: Request) {
-  const formData = await req.formData();
-  const paymentId = String(formData.get("paymentId") ?? "");
-
-  if (!paymentId) {
-    return NextResponse.json({ error: "invalid_payload" }, { status: 400 });
-  }
-
   const cookieStore = cookies();
   const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON, {
-    cookies: {
-      get(name: string) {
-        return cookieStore.get(name)?.value;
-      },
-    },
+    cookies: { get: (n: string) => cookieStore.get(n)?.value },
   });
 
-  // --- Guard: staff/admin only ---
-  const { data: me, error: meErr } = await supabase
+  // Auth + role gate (server-side)
+  const { data: me } = await supabase.auth.getUser();
+  if (!me?.user) return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+
+  const { data: prof } = await supabase
     .from("profiles")
-    .select("id, role, email")
-    .single();
-
-  if (meErr || !me || !["staff", "admin"].includes(String(me.role))) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
-
-  // --- Fetch payment + invoice (scoped join) ---
-  const { data: payment, error: payErr } = await supabase
-    .from("payments")
-    .select(
-      `
-        id, status, amount_cents, currency, reference, created_at, confirmed_at,
-        tenant_id, invoice_id,
-        invoice:invoices!payments_invoice_id_fkey ( id, number, tenant_id, status )
-      `
-    )
-    .eq("id", paymentId)
+    .select("role")
+    .eq("user_id", me.user.id)
     .maybeSingle();
 
-  if (payErr || !payment) {
-    return NextResponse.json({ error: "payment_not_found" }, { status: 404 });
+  if (!prof || !["staff", "admin"].includes(String(prof.role))) {
+    return NextResponse.json({ error: "not_permitted" }, { status: 403 });
   }
 
-  const inv = Array.isArray(payment.invoice)
-    ? payment.invoice?.[0] ?? null
-    : payment.invoice ?? null;
+  const form = await req.formData();
+  const paymentId = String(form.get("paymentId") || "").trim();
+  const invoiceId = String(form.get("invoiceId") || "").trim();
 
-  if (!inv) {
-    return NextResponse.json({ error: "invoice_not_found" }, { status: 400 });
-  }
-
-  // If already confirmed, just head back (idempotent UX)
-  if (String(payment.status) === "confirmed") {
-    const url = new URL(`/admin/payments?confirmed=${paymentId}`, SITE_URL);
+  if (!paymentId || !invoiceId) {
+    const url = new URL("/admin/payments?error=invalid_payload", req.url);
     return NextResponse.redirect(url, 303);
   }
 
-  // --- 1) Confirm the payment ---
-  {
-    const { error } = await supabase
-      .from("payments")
-      .update({ status: "confirmed", confirmed_at: new Date().toISOString() })
-      .eq("id", paymentId);
+  // Load payment + invoice (RLS allows staff/admin)
+  const { data: payment, error: pErr } = await supabase
+    .from("payments")
+    .select("id, amount_cents, currency, status, invoice:invoices(id, number, tenant_id, status)")
+    .eq("id", paymentId)
+    .maybeSingle();
 
-    if (error) {
-      return NextResponse.json(
-        { error: "update_payment_failed", detail: error.message },
-        { status: 500 }
-      );
-    }
+  if (pErr || !payment) {
+    const url = new URL("/admin/payments?error=payment_not_found", req.url);
+    return NextResponse.redirect(url, 303);
   }
 
-  // --- 2) Mark invoice paid ---
-  {
-    const { error } = await supabase
-      .from("invoices")
-      .update({ status: "paid" })
-      .eq("id", inv.id);
-
-    if (error) {
-      return NextResponse.json(
-        { error: "update_invoice_failed", detail: error.message },
-        { status: 500 }
-      );
-    }
+  const inv = Array.isArray(payment.invoice) ? payment.invoice[0] : payment.invoice;
+  if (!inv || inv.id !== invoiceId) {
+    const url = new URL("/admin/payments?error=invoice_not_found", req.url);
+    return NextResponse.redirect(url, 303);
   }
 
-  // --- 3) Insert receipt ---
-  const rcptNumber = makeReceiptNumber();
-  const {
-    data: receipt,
-    error: rcptErr,
-  } = await supabase
-    .from("receipts")
-    .insert({
-      invoice_id: inv.id,
+  // Confirm payment
+  const { error: updErr } = await supabase
+    .from("payments")
+    .update({ status: "confirmed", confirmed_at: new Date().toISOString() })
+    .eq("id", paymentId);
+
+  if (updErr) {
+    const url = new URL("/admin/payments?error=update_failed", req.url);
+    return NextResponse.redirect(url, 303);
+  }
+
+  // (Simple MVP) Mark invoice paid as well
+  try {
+    await supabase.from("invoices").update({ status: "paid" }).eq("id", invoiceId);
+  } catch {
+    // ignore
+  }
+
+  // Create receipt row (id auto, lightweight number)
+  try {
+    const rcptNo = `RCPT-${paymentId.slice(0, 8).toUpperCase()}`;
+    await supabase.from("receipts").insert({
+      invoice_id: invoiceId,
       payment_id: paymentId,
-      number: rcptNumber,
-      // issued_at defaults in DB if present; else we rely on created_at
-    })
-    .select("id, number")
-    .single();
-
-  if (rcptErr || !receipt) {
-    return NextResponse.json(
-      { error: "insert_receipt_failed", detail: rcptErr?.message ?? "" },
-      { status: 500 }
-    );
+      number: rcptNo,
+    });
+  } catch {
+    // ignore if duplicate exists or any constraint hit
   }
 
-  // --- 4) Audit log (best-effort; ignore failures) ---
-  await supabase.from("audit_log").insert([
-    {
-      entity: "payment",
+  // Audit log (best-effort)
+  try {
+    await supabase.from("audit_log").insert({
+      actor_user_id: me.user.id,
+      action: "confirm_payment",
+      entity_table: "payments",
       entity_id: paymentId,
-      action: "confirm",
-      actor_user_id: me.id,
-    },
-    {
-      entity: "invoice",
-      entity_id: inv.id,
-      action: "paid",
-      actor_user_id: me.id,
-    },
-    {
-      entity: "receipt",
-      entity_id: receipt.id,
-      action: "issue",
-      actor_user_id: me.id,
-    },
-  ]);
+      metadata_json: { invoice_id: invoiceId },
+    });
+  } catch {
+    // ignore
+  }
 
-  // --- 5) Optional email send (no-op if you don't wire a provider) ---
-  // Placeholder: if you later add RESEND or SMTP, trigger an email here with a
-  // link to the receipt PDF:
-  //   `${SITE_URL}/api/tenant/invoices/${inv.id}/receipt`
-  // Keep this as a no-op to avoid new deps.
-
-  // Redirect back to Admin Payments with success params
-  const url = new URL("/admin/payments", SITE_URL);
-  url.searchParams.set("confirmed", paymentId);
-  url.searchParams.set("receipt", receipt.number);
+  const url = new URL("/admin/payments?ok=confirmed", req.url);
   return NextResponse.redirect(url, 303);
 }
