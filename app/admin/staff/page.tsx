@@ -1,145 +1,177 @@
 // app/admin/staff/page.tsx
-import { revalidatePath } from "next/cache";
 import { createRouteSupabase } from "@/lib/supabase/server";
+import { revalidatePath } from "next/cache";
+import Link from "next/link";
 
-export const runtime = "nodejs";
+type Role = "tenant" | "landlord" | "staff" | "admin";
+const ROLES: Role[] = ["tenant", "landlord", "staff", "admin"];
 
-// Allowed roles
-const ROLES = ["tenant", "landlord", "staff", "admin"] as const;
-type Role = (typeof ROLES)[number];
-
-type ProfileRow = {
-  id: string;
-  email: string | null;
-  role: Role | string | null;
-  updated_at: string | null;
-};
-
-// --- Server action: set role ---
-async function setRoleAction(formData: FormData) {
-  "use server";
-  const userId = String(formData.get("userId") || "");
-  const newRole = String(formData.get("newRole") || "").toLowerCase();
-
-  if (!userId || !ROLES.includes(newRole as Role)) {
-    // ignore bad payloads to avoid noisy UI
-    return;
-  }
-
+async function requireStaffOrAdmin() {
   const supabase = createRouteSupabase();
-  const { error } = await supabase.rpc("admin_set_role", {
-    target_user_id: userId,
-    new_role: newRole,
-  });
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth?.user) return { allowed: false as const, reason: "not_signed_in" };
 
-  // Silent failure to keep UX simple; in ops we can add toasts later.
-  if (!error) {
-    revalidatePath("/admin/staff");
-  }
+  const { data: me } = await supabase
+    .from("profiles")
+    .select("id, email, role")
+    .eq("id", auth.user.id)
+    .maybeSingle();
+
+  const allowed = me?.role === "staff" || me?.role === "admin";
+  return { allowed: !!allowed, me };
 }
 
-export default async function AdminStaffPage() {
-  const supabase = createRouteSupabase();
+export const dynamic = "force-dynamic";
 
-  // Secure list (function itself verifies caller is admin/staff)
-  const { data, error } = await supabase.rpc("admin_list_profiles");
-
-  if (error) {
-    // If middleware ever misses, this still protects the view
+export default async function StaffRolesPage() {
+  const guard = await requireStaffOrAdmin();
+  if (!guard.allowed) {
     return (
       <div className="mx-auto w-full max-w-3xl p-6">
         <h1 className="text-xl font-semibold mb-2">Not permitted</h1>
         <p className="text-sm text-gray-600">
-          You don’t have permission to view this page.
+          You must be STAFF or ADMIN to view this page.
         </p>
+        <div className="mt-4">
+          <Link href="/" className="text-sm underline">
+            Go home
+          </Link>
+        </div>
       </div>
     );
   }
 
-  const rows = (data || []) as ProfileRow[];
+  const supabase = createRouteSupabase();
+  const { data: rows, error } = await supabase
+    .from("profiles")
+    .select("id, email, role, created_at, updated_at")
+    .order("email", { ascending: true });
+
+  if (error) {
+    return (
+      <div className="mx-auto w-full max-w-3xl p-6">
+        <h1 className="text-xl font-semibold mb-2">Staff management</h1>
+        <p className="text-sm text-red-600">Failed to load users: {error.message}</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="mx-auto w-full max-w-3xl p-4 md:p-6">
+    <div className="mx-auto w-full max-w-4xl p-6">
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Admin · Staff & Roles</h1>
-        <a
-          href="/"
-          className="text-sm underline hover:opacity-80"
-        >
-          Back to dashboard
-        </a>
+        <h1 className="text-xl font-semibold">Staff management</h1>
+        <Link href="/admin" className="text-sm underline">
+          ← Back to admin
+        </Link>
       </div>
 
-      <div className="rounded-2xl border p-4">
-        <div className="mb-3 text-sm text-gray-600">
-          Promote/demote user roles. Admins can set any role; Staff can only set
-          <span className="px-1 font-medium">tenant</span> or
-          <span className="px-1 font-medium">landlord</span>.
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-gray-500">
-                <th className="py-2 pr-3">Email</th>
-                <th className="py-2 pr-3">Current role</th>
-                <th className="py-2 pr-3">Updated</th>
-                <th className="py-2 pr-3">Set role</th>
-                <th className="py-2 pr-3">Action</th>
+      <div className="overflow-x-auto rounded-2xl border">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="p-3 text-left">Email</th>
+              <th className="p-3 text-left">Role</th>
+              <th className="p-3 text-left">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(rows ?? []).map((u) => (
+              <tr key={u.id} className="border-t">
+                <td className="p-3">{u.email}</td>
+                <td className="p-3">
+                  <span className="rounded-full border px-2 py-0.5 text-xs">
+                    {u.role}
+                  </span>
+                </td>
+                <td className="p-3">
+                  <div className="flex flex-wrap gap-2">
+                    <RoleForm userId={u.id} newRole="tenant" current={u.role} />
+                    <RoleForm userId={u.id} newRole="landlord" current={u.role} />
+                    <RoleForm userId={u.id} newRole="staff" current={u.role} />
+                    <RoleForm userId={u.id} newRole="admin" current={u.role} />
+                  </div>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} className="border-t">
-                  <td className="py-2 pr-3">{r.email ?? "—"}</td>
-                  <td className="py-2 pr-3">{r.role ?? "—"}</td>
-                  <td className="py-2 pr-3">
-                    {r.updated_at
-                      ? new Date(r.updated_at).toLocaleString()
-                      : "—"}
-                  </td>
-                  <td className="py-2 pr-3">
-                    <form action={setRoleAction} className="flex items-center gap-2">
-                      <input type="hidden" name="userId" value={r.id} />
-                      <select
-                        name="newRole"
-                        defaultValue={(r.role ?? "tenant").toString()}
-                        className="rounded-lg border px-2 py-1"
-                      >
-                        {ROLES.map((role) => (
-                          <option key={role} value={role}>
-                            {role}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="submit"
-                        className="rounded-xl border px-3 py-1 hover:bg-gray-50"
-                        title="Apply role"
-                      >
-                        Update
-                      </button>
-                    </form>
-                  </td>
-                  <td className="py-2 pr-3">
-                    {/* Reserved for future: force sign-out, view activity, etc. */}
-                    <span className="text-gray-400">—</span>
-                  </td>
-                </tr>
-              ))}
-
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="py-6 text-center text-gray-500">
-                    No users found.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
+            ))}
+            {(!rows || rows.length === 0) && (
+              <tr>
+                <td className="p-3 text-gray-600" colSpan={3}>
+                  No users found.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
+      <p className="mt-3 text-xs text-gray-500">
+        Changes apply immediately and are enforced by RLS. This page is server-guarded.
+      </p>
     </div>
+  );
+}
+
+/** SERVER ACTION (same file, safe for Next 14) */
+export async function setRoleAction(formData: FormData) {
+  "use server";
+  const supabase = createRouteSupabase();
+
+  // Enforce requester is staff/admin
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth?.user) return { ok: false, error: "not_signed_in" };
+
+  const { data: me } = await supabase
+    .from("profiles")
+    .select("id, role")
+    .eq("id", auth.user.id)
+    .maybeSingle();
+  if (!me || (me.role !== "staff" && me.role !== "admin"))
+    return { ok: false, error: "forbidden" };
+
+  const userId = String(formData.get("userId") ?? "");
+  const newRole = String(formData.get("newRole") ?? "") as Role;
+  if (!userId || !ROLES.includes(newRole)) {
+    return { ok: false, error: "invalid_input" };
+  }
+
+  const { error } = await supabase
+    .from("profiles")
+    .update({ role: newRole })
+    .eq("id", userId);
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/admin/staff");
+  return { ok: true };
+}
+
+/** Small server component wrapper that renders a form per role action */
+function RoleForm(props: { userId: string; newRole: Role; current: string }) {
+  const label =
+    props.newRole === "tenant"
+      ? "Set TENANT"
+      : props.newRole === "landlord"
+      ? "Set LANDLORD"
+      : props.newRole === "staff"
+      ? "Promote STAFF"
+      : "Promote ADMIN";
+
+  const subtle =
+    props.current === props.newRole
+      ? "opacity-60 cursor-default"
+      : "";
+
+  // Server component forms can submit to server actions directly
+  return (
+    <form action={setRoleAction}>
+      <input type="hidden" name="userId" value={props.userId} />
+      <input type="hidden" name="newRole" value={props.newRole} />
+      <button
+        type="submit"
+        className={`rounded-lg border px-2 py-1 text-xs hover:bg-gray-50 ${subtle}`}
+        disabled={props.current === props.newRole}
+      >
+        {label}
+      </button>
+    </form>
   );
 }
