@@ -1,162 +1,218 @@
 // app/tenant/lease/page.tsx
 import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
 import { createServerClient } from "@supabase/ssr";
+import Link from "next/link";
 
-type Profile = {
-  id: string;
-  email: string | null;
-  role: "tenant" | "landlord" | "staff" | "admin";
-  full_name: string | null;
-};
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 type LeaseRow = {
   id: string;
-  property_id: string;
-  unit_id: string;
-  start_date: string;
+  property_id: string | null;
+  unit_id: string | null;
+  landlord_id: string | null;
+  tenant_id: string | null;
+  rent_amount_cents: number | null;
+  currency: string | null;
+  start_date: string | null;
   end_date: string | null;
-  status: "active" | "ended" | "pending";
+  status: string | null;
+  created_at: string | null;
 };
 
-type PropertyRow = { id: string; name: string };
-type UnitRow = { id: string; unit_number: string };
+type PropertyRow = {
+  id: string;
+  name: string | null;
+  address_line1: string | null;
+  address_line2: string | null;
+  city: string | null;
+  state: string | null;
+  postal_code: string | null;
+  country: string | null;
+};
 
-function getSupabaseServer() {
-  const store = cookies();
-  // Read-only cookie access is enough for SSR auth; no-ops for set/remove keep typing happy.
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) {
-          return store.get(name)?.value;
-        },
-        set() {},
-        remove() {},
-      },
-    }
-  );
+type UnitRow = {
+  id: string;
+  name: string | null;
+  bedrooms: number | null;
+  bathrooms: number | null;
+  sqft: number | null;
+};
+
+function fmtMoney(cents?: number | null, currency?: string | null) {
+  const c = typeof cents === "number" ? cents : 0;
+  const cur = currency || "PKR";
+  const amount = c / 100;
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency: cur, maximumFractionDigits: 2 }).format(
+      amount
+    );
+  } catch {
+    return `${amount.toFixed(2)} ${cur}`;
+  }
 }
 
 export default async function TenantLeasePage() {
-  const supabase = getSupabaseServer();
+  const cookieStore = cookies();
+  const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON, {
+    cookies: { get: (name: string) => cookieStore.get(name)?.value },
+  });
 
-  // Guard: must be signed in
-  const { data: userResp } = await supabase.auth.getUser();
-  const user = userResp?.user;
-  if (!user) redirect("/sign-in");
+  // With RLS enabled, this returns only the signed-in tenant's leases.
+  // We take the most recent one as "current".
+  const { data: lease, error } = await supabase
+    .from("leases")
+    .select(
+      "id, property_id, unit_id, landlord_id, tenant_id, rent_amount_cents, currency, start_date, end_date, status, created_at"
+    )
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-  // Load profile for role-aware rendering
-  const { data: profile, error: pErr } = await supabase
-    .from("profiles")
-    .select("id, email, role, full_name")
-    .eq("id", user.id)
-    .maybeSingle<Profile>();
-
-  if (pErr || !profile) {
+  if (error) {
+    // Render a friendly error rather than throwing (keeps Vercel logs clean)
     return (
-      <div className="mx-auto max-w-2xl p-6">
-        <h1 className="text-xl font-semibold">My Lease</h1>
-        <p className="mt-2 text-sm text-red-600">Profile not found.</p>
+      <div className="mx-auto w-full max-w-3xl p-4 md:p-6">
+        <h1 className="text-xl font-semibold">My lease</h1>
+        <div className="mt-3 rounded-xl border p-4 text-sm">
+          <div className="font-medium">Couldn’t load your lease.</div>
+          <div className="mt-1 text-gray-600">Please try again in a moment.</div>
+        </div>
       </div>
     );
   }
 
-  // Try to fetch the most recent non-ended lease for this tenant
-  let lease: LeaseRow | null = null;
-  let lErr: any = null;
-
-  {
-    const { data, error } = await supabase
-      .from("leases")
-      .select("id, property_id, unit_id, start_date, end_date, status")
-      .eq("tenant_id", profile.id)
-      .neq("status", "ended")
-      .order("start_date", { ascending: false })
-      .limit(1)
-      .maybeSingle<LeaseRow>();
-
-    lease = data ?? null;
-    lErr = error ?? null;
-  }
-
-  // If RLS blocks tenants for now, or simply no leases yet, render a friendly message.
-  if (lErr || !lease) {
-    const msg =
-      lErr && (lErr.code === "42501" || lErr.message?.includes("permission"))
-        ? "Your lease will appear here once access is enabled."
-        : "No active lease found yet.";
-
+  if (!lease) {
     return (
-      <div className="mx-auto max-w-2xl p-6">
-        <h1 className="text-xl font-semibold">My Lease</h1>
-        <p className="mt-2 text-sm text-gray-600">{msg}</p>
+      <div className="mx-auto w-full max-w-3xl p-4 md:p-6">
+        <div className="mb-4 flex items-center justify-between gap-2">
+          <h1 className="text-xl font-semibold">My lease</h1>
+          <div className="flex gap-3 text-sm">
+            <Link href="/tenant/invoices" className="underline hover:no-underline">
+              Invoices
+            </Link>
+            <Link href="/tenant/payments" className="underline hover:no-underline">
+              Payments
+            </Link>
+          </div>
+        </div>
+        <div className="rounded-xl border p-6 text-sm">
+          <div className="font-medium">No lease on file</div>
+          <div className="mt-1 text-gray-600">
+            When your landlord creates a lease for you, it will appear here with rent, dates, and property details.
+          </div>
+        </div>
       </div>
     );
   }
 
-  // Load property & unit (separate simple queries to avoid relationship typing surprises)
-  let property: PropertyRow | null = null;
-  let unit: UnitRow | null = null;
+  // Fetch related property & unit (keep it simple: separate queries = fewer type surprises)
+  const propertyId = lease.property_id ?? "";
+  const unitId = lease.unit_id ?? "";
 
-  {
-    const { data } = await supabase
-      .from("properties")
-      .select("id, name")
-      .eq("id", lease.property_id)
-      .maybeSingle<PropertyRow>();
-    property = data ?? null;
-  }
+  const [{ data: property }, { data: unit }] = await Promise.all([
+    propertyId
+      ? supabase
+          .from("properties")
+          .select("id, name, address_line1, address_line2, city, state, postal_code, country")
+          .eq("id", propertyId)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+    unitId
+      ? supabase.from("units").select("id, name, bedrooms, bathrooms, sqft").eq("id", unitId).maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
 
-  {
-    const { data } = await supabase
-      .from("units")
-      .select("id, unit_number")
-      .eq("id", lease.unit_id)
-      .maybeSingle<UnitRow>();
-    unit = data ?? null;
-  }
-
-  const start = new Date(lease.start_date).toDateString();
-  const end = lease.end_date ? new Date(lease.end_date).toDateString() : "—";
-  const where = [
-    property?.name ? `Property: ${property.name}` : null,
-    unit?.unit_number ? `Unit: ${unit.unit_number}` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const leaseStart = lease.start_date ? new Date(lease.start_date).toDateString() : "—";
+  const leaseEnd = lease.end_date ? new Date(lease.end_date).toDateString() : "—";
+  const rent = fmtMoney(lease.rent_amount_cents ?? 0, lease.currency ?? "PKR");
 
   return (
-    <div className="mx-auto max-w-2xl p-6">
-      <h1 className="text-xl font-semibold">My Lease</h1>
-
-      <div className="mt-4 rounded-2xl border p-4">
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-medium">
-            {where || "Property details unavailable"}
-          </span>
-          <span className="rounded-full border px-2 py-0.5 text-xs">
-            {lease.status.toUpperCase()}
-          </span>
+    <div className="mx-auto w-full max-w-3xl p-4 md:p-6">
+      <div className="mb-4 flex items-center justify-between gap-2">
+        <h1 className="text-xl font-semibold">My lease</h1>
+        <div className="flex gap-3 text-sm">
+          <Link href="/tenant/invoices" className="underline hover:no-underline">
+            Invoices
+          </Link>
+          <Link href="/tenant/payments" className="underline hover:no-underline">
+            Payments
+          </Link>
         </div>
-
-        <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-          <div>
-            <dt className="text-gray-500">Start date</dt>
-            <dd className="font-medium">{start}</dd>
-          </div>
-          <div>
-            <dt className="text-gray-500">End date</dt>
-            <dd className="font-medium">{end}</dd>
-          </div>
-        </dl>
       </div>
 
-      <p className="mt-3 text-xs text-gray-500">
-        If this looks wrong, contact support@rentback.app.
-      </p>
+      <div className="space-y-4">
+        <div className="rounded-xl border p-4">
+          <div className="text-sm">
+            <div className="font-medium">Rent</div>
+            <div className="text-gray-700">{rent}</div>
+          </div>
+          <div className="mt-3 grid grid-cols-1 gap-3 text-sm md:grid-cols-2">
+            <div>
+              <div className="font-medium">Start date</div>
+              <div className="text-gray-700">{leaseStart}</div>
+            </div>
+            <div>
+              <div className="font-medium">End date</div>
+              <div className="text-gray-700">{leaseEnd}</div>
+            </div>
+            <div>
+              <div className="font-medium">Status</div>
+              <div className="text-gray-700">{lease.status || "—"}</div>
+            </div>
+            <div>
+              <div className="font-medium">Lease ID</div>
+              <div className="text-gray-700">{lease.id}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl border p-4">
+          <div className="text-sm">
+            <div className="font-medium">Property</div>
+            <div className="text-gray-700">
+              {property?.name || "—"}
+              <div className="mt-1 text-gray-600">
+                {[property?.address_line1, property?.address_line2].filter(Boolean).join(", ") || "—"}
+                <br />
+                {[
+                  property?.city,
+                  property?.state,
+                  property?.postal_code,
+                  property?.country,
+                ]
+                  .filter(Boolean)
+                  .join(", ") || "—"}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl border p-4">
+          <div className="text-sm">
+            <div className="font-medium">Unit</div>
+            <div className="text-gray-700">
+              {unit?.name || "—"}
+              <div className="mt-1 text-gray-600">
+                {[
+                  unit?.bedrooms != null ? `${unit?.bedrooms} BR` : null,
+                  unit?.bathrooms != null ? `${unit?.bathrooms} BA` : null,
+                  unit?.sqft != null ? `${unit?.sqft} sqft` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || "—"}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl border p-4 text-xs text-gray-600">
+          Data displayed here is read-only. Contact your landlord if something looks incorrect.
+        </div>
+      </div>
     </div>
   );
 }
