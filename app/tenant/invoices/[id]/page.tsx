@@ -1,108 +1,122 @@
 // app/tenant/invoices/[id]/page.tsx
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { createRouteSupabase } from "@/lib/supabase/server";
+import Link from "next/link";
+import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type SearchParams = { [key: string]: string | string[] | undefined };
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+type Row = {
+  id: string;
+  number: string | null;
+  status: string | null;
+  issued_at: string | null;
+  due_date: string | null;
+  amount_cents: number | null;
+  currency: string | null;
+};
+
+function Banner({ ok, error }: { ok?: string; error?: string }) {
+  if (ok === "payment_submitted") {
+    return (
+      <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-2 text-sm text-green-800">
+        ✅ Payment submitted. We’ll mark it confirmed after verification.
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800">
+        ⚠️ {error}
+      </div>
+    );
+  }
+  return null;
+}
 
 export default async function TenantInvoiceDetail({
   params,
   searchParams,
 }: {
   params: { id: string };
-  searchParams?: SearchParams;
+  searchParams: Record<string, string | string[] | undefined>;
 }) {
-  const supabase = createRouteSupabase();
-  const { id } = params;
+  const cookieStore = cookies();
+  const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON, {
+    cookies: { get: (n: string) => cookieStore.get(n)?.value },
+  });
+
+  const { data: me } = await supabase.auth.getUser();
+  if (!me?.user) notFound();
 
   const { data: invoice, error } = await supabase
     .from("invoices")
-    .select(
-      "id, number, status, total_amount, currency, description, issued_at, due_date"
-    )
-    .eq("id", id)
-    .maybeSingle();
+    .select("id, number, status, issued_at, due_date, amount_cents, currency")
+    .eq("id", params.id)
+    .maybeSingle<Row>();
 
-  if (error || !invoice) {
-    notFound();
-  }
+  if (error || !invoice) notFound();
 
-  const backQS = typeof searchParams?.from === "string" && searchParams!.from
-    ? `?${searchParams!.from}`
-    : "";
+  const isPaid = String(invoice.status ?? "").toLowerCase() === "paid";
+  const total = (invoice.amount_cents ?? 0) / 100;
+  const currency = invoice.currency ?? "PKR";
 
-  const isPaid = String(invoice.status || "").toLowerCase() === "paid";
-  const invoiceUrl = `/api/tenant/invoices/${invoice.id}/pdf`;
-  const receiptUrl = `/api/tenant/invoices/${invoice.id}/receipt`;
-
-  const issued = invoice.issued_at
-    ? new Date(invoice.issued_at).toDateString()
-    : "—";
-  const due = invoice.due_date
-    ? new Date(invoice.due_date).toDateString()
-    : "—";
-  const amount =
-    typeof invoice.total_amount === "number" ? invoice.total_amount : 0;
+  const ok = (searchParams["ok"] as string | undefined) || undefined;
+  const err = (searchParams["error"] as string | undefined) || undefined;
 
   return (
-    <div className="mx-auto max-w-2xl p-6">
-      <div className="mb-4 flex items-center justify-between">
-        <Link
-          href={`/tenant/invoices${backQS}`}
-          className="text-sm text-blue-600 hover:underline"
-        >
+    <div className="mx-auto w-full max-w-3xl p-4 md:p-6">
+      <div className="mb-4">
+        <Link href="/tenant/invoices" className="text-sm underline hover:no-underline">
           ← Back to invoices
-        </Link>
-        <Link href="/sign-out" className="text-xs text-gray-500 hover:underline">
-          Sign out
         </Link>
       </div>
 
-      <h1 className="text-xl font-semibold">
-        Invoice {invoice.number ? `#${invoice.number}` : ""}
-      </h1>
-      <p className="mt-1 text-sm text-gray-600">
-        {invoice.description || "—"} · {String(invoice.status || "").toUpperCase()}
-      </p>
+      <Banner ok={ok} error={err} />
 
-      <div className="mt-6 space-y-3 rounded-2xl border p-4">
-        <div className="flex items-center gap-2">
+      <div className="rounded-2xl border p-4 md:p-6">
+        <h1 className="text-xl font-semibold mb-1">
+          Invoice {invoice.number ?? invoice.id.slice(0, 8)}
+        </h1>
+        <p className="text-sm text-gray-600 mb-4">
+          {isPaid ? "PAID" : "OPEN"} · Total: {total} {currency}
+        </p>
+
+        <div className="flex flex-wrap gap-3">
           <a
-            href={invoiceUrl}
-            target="_blank"
-            rel="noopener noreferrer"
+            href={`/api/tenant/invoices/${invoice.id}/pdf`}
             className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
           >
             Download invoice (PDF)
           </a>
           <a
-            href={receiptUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={`rounded-xl border px-3 py-2 text-sm hover:bg-gray-50 ${
-              isPaid ? "" : "pointer-events-none opacity-50"
-            }`}
+            href={`/api/tenant/invoices/${invoice.id}/receipt`}
+            className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
           >
             Download receipt (PDF)
           </a>
+          {!isPaid && (
+            <Link
+              href={`/tenant/invoices/${invoice.id}/pay`}
+              className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
+            >
+              Pay now
+            </Link>
+          )}
         </div>
 
-        <div className="grid grid-cols-2 gap-2 text-sm">
-          <div>
-            <div className="text-gray-500">Total</div>
-            <div className="font-medium">
-              {amount} {invoice.currency || "PKR"}
-            </div>
-          </div>
+        <div className="mt-6 grid grid-cols-1 gap-2 text-sm md:grid-cols-2">
           <div>
             <div className="text-gray-500">Issued</div>
-            <div className="font-medium">{issued}</div>
+            <div>{invoice.issued_at ? new Date(invoice.issued_at).toDateString() : "—"}</div>
           </div>
           <div>
             <div className="text-gray-500">Due</div>
-            <div className="font-medium">{due}</div>
+            <div>{invoice.due_date ? new Date(invoice.due_date).toDateString() : "—"}</div>
           </div>
         </div>
       </div>
