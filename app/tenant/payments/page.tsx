@@ -1,10 +1,10 @@
 // app/tenant/payments/page.tsx
+// Server Component — lists the signed-in tenant's payments (RLS-scoped).
+import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
 import Link from "next/link";
-import { createRouteSupabase } from "@/lib/supabase/server";
 
-export const revalidate = 0;
-
-type InvoiceMini = {
+type InvoiceRef = {
   id: string;
   number: string | null;
   due_date: string | null;
@@ -12,176 +12,218 @@ type InvoiceMini = {
 
 type PaymentRow = {
   id: string;
-  amount_cents: number | null;
-  currency: string | null;
-  status: string;
+  amount_cents: number;
+  currency: string;
+  status: string | null;
   reference: string | null;
   created_at: string;
   confirmed_at: string | null;
-  invoice: InvoiceMini;
+  invoice: InvoiceRef;
 };
 
-function formatMoney(
-  cents: number | null | undefined,
-  currency: string | null | undefined
-) {
-  const amt = typeof cents === "number" ? cents / 100 : 0;
-  const cur = currency || "PKR";
+function fmtMoney(amountCents: number, currency: string) {
   try {
-    return new Intl.NumberFormat("en-US", {
+    return new Intl.NumberFormat(undefined, {
       style: "currency",
-      currency: cur,
-    }).format(amt);
+      currency,
+      currencyDisplay: "code",
+      maximumFractionDigits: 0,
+      minimumFractionDigits: 0,
+    }).format(amountCents / 100);
   } catch {
-    return `${amt.toLocaleString()} ${cur}`;
+    // Fallback for unusual/unsupported currency codes
+    return `${Math.round(amountCents / 100)} ${currency}`;
   }
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const s = (status || "").toLowerCase();
-  const base =
-    "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium";
-  const tone =
-    s === "confirmed"
-      ? "bg-green-100 text-green-800"
-      : s === "submitted"
-      ? "bg-yellow-100 text-yellow-800"
-      : s === "rejected"
-      ? "bg-red-100 text-red-800"
-      : "bg-gray-100 text-gray-800";
-  const label = s ? s.toUpperCase() : "UNKNOWN";
-  return <span className={`${base} ${tone}`}>{label}</span>;
-}
+export const metadata = {
+  title: "My Payments — RentBack",
+};
 
 export default async function TenantPaymentsPage() {
-  const supabase = createRouteSupabase();
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  const cookieStore = cookies();
 
-  // RLS scopes payments to the signed-in tenant
+  const supabase = createServerClient(url, anon, {
+    cookies: {
+      get(name: string) {
+        return cookieStore.get(name)?.value;
+      },
+      set(name: string, value: string, options: any) {
+        cookieStore.set(name, value, options);
+      },
+      remove(name: string, options: any) {
+        cookieStore.set(name, "", { ...options, maxAge: 0 });
+      },
+    },
+  });
+
+  // RLS restricts to this tenant automatically; no need to pass user id filters here.
   const { data, error } = await supabase
     .from("payments")
     .select(
       `
-      id,
-      amount_cents,
-      currency,
-      status,
-      reference,
-      created_at,
-      confirmed_at,
-      invoice:invoices (
         id,
-        number,
-        due_date
-      )
-    `
+        amount_cents,
+        currency,
+        status,
+        reference,
+        created_at,
+        confirmed_at,
+        invoice:invoices (
+          id,
+          number,
+          due_date
+        )
+      `
     )
     .order("created_at", { ascending: false })
     .limit(100);
 
-  // Normalize nested relation: Supabase can return invoice as an array
-  const rows: PaymentRow[] = (data ?? []).map((r: any) => {
-    const inv = Array.isArray(r.invoice)
-      ? r.invoice[0] ?? null
-      : r.invoice ?? null;
+  if (error) {
+    // Friendly message (don't leak details)
+    return (
+      <div className="mx-auto w-full max-w-3xl p-4 md:p-6">
+        <h1 className="text-xl font-semibold">My Payments</h1>
+        <p className="mt-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+          Couldn’t load your payments right now. Please try again.
+        </p>
+      </div>
+    );
+  }
+
+  // Normalize potential array/object relation shape defensively.
+  const rows: PaymentRow[] = (data ?? []).map((p: any) => {
+    const invRaw = p?.invoice;
+    const inv = Array.isArray(invRaw) ? invRaw[0] : invRaw;
+    const invoice: InvoiceRef = inv
+      ? {
+          id: String(inv.id),
+          number: inv.number == null ? null : String(inv.number),
+          due_date: inv.due_date == null ? null : String(inv.due_date),
+        }
+      : null;
 
     return {
-      id: String(r.id),
-      amount_cents: typeof r.amount_cents === "number" ? r.amount_cents : null,
-      currency: r.currency ?? null,
-      status: r.status ?? "",
-      reference: r.reference ?? null,
-      created_at: r.created_at,
-      confirmed_at: r.confirmed_at ?? null,
-      invoice: inv
-        ? {
-            id: String(inv.id),
-            number: inv.number ?? null,
-            due_date: inv.due_date ?? null,
-          }
-        : null,
+      id: String(p.id),
+      amount_cents: Number(p.amount_cents) || 0,
+      currency: String(p.currency || "PKR"),
+      status: p.status == null ? null : String(p.status),
+      reference: p.reference == null ? null : String(p.reference),
+      created_at: String(p.created_at),
+      confirmed_at: p.confirmed_at == null ? null : String(p.confirmed_at),
+      invoice,
     };
   });
 
+  const totalPaid = rows
+    .filter((r) => (r.status || "").toLowerCase() === "confirmed")
+    .reduce((acc, r) => acc + (r.amount_cents || 0), 0);
+
   return (
     <div className="mx-auto w-full max-w-3xl p-4 md:p-6">
-      <div className="mb-4">
-        <Link href="/tenant" className="text-sm text-blue-600 hover:underline">
-          ← Back to dashboard
+      <div className="mb-4 flex items-center justify-between">
+        <h1 className="text-xl font-semibold">My Payments</h1>
+        <Link
+          href="/tenant/invoices"
+          className="text-sm text-blue-600 hover:underline"
+        >
+          ← Back to invoices
         </Link>
       </div>
 
-      <h1 className="text-2xl font-semibold">My Payments</h1>
-      <p className="mt-1 text-sm text-gray-600">
-        Your recent rent payments. Confirmed items will also appear on receipts.
-      </p>
-
-      {error ? (
-        <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          Failed to load payments. Please try again.
-        </div>
-      ) : rows.length === 0 ? (
-        <div className="mt-6 rounded-lg border p-6 text-center text-sm text-gray-600">
-          No payments yet.
+      {rows.length === 0 ? (
+        <div className="rounded-xl border p-6 text-sm text-gray-600">
+          No payments yet. When you submit a payment for an invoice, it will
+          appear here with its status.
         </div>
       ) : (
-        <div className="mt-6 overflow-hidden rounded-xl border">
-          <table className="min-w-full divide-y divide-gray-200 text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-3 py-2 text-left font-medium text-gray-700">
-                  Date
-                </th>
-                <th className="px-3 py-2 text-left font-medium text-gray-700">
-                  Invoice
-                </th>
-                <th className="px-3 py-2 text-left font-medium text-gray-700">
-                  Reference
-                </th>
-                <th className="px-3 py-2 text-left font-medium text-gray-700">
-                  Amount
-                </th>
-                <th className="px-3 py-2 text-left font-medium text-gray-700">
-                  Status
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 bg-white">
-              {rows.map((p) => {
-                const created = p.created_at
-                  ? new Date(p.created_at).toDateString()
-                  : "";
-                const amount = formatMoney(p.amount_cents, p.currency);
-                const invNum = p.invoice?.number ?? "—";
-                const invLink = p.invoice?.id
-                  ? `/tenant/invoices/${p.invoice.id}`
-                  : null;
+        <>
+          <div className="mb-3 text-sm text-gray-600">
+            Showing <span className="font-medium">{rows.length}</span> most
+            recent payments.{" "}
+            <span className="ml-2">
+              Total confirmed:{" "}
+              <span className="font-medium">
+                {rows.length > 0
+                  ? fmtMoney(
+                      totalPaid,
+                      rows[0]?.currency ? rows[0].currency : "PKR"
+                    )
+                  : "-"}
+              </span>
+            </span>
+          </div>
 
-                return (
-                  <tr key={p.id} className="hover:bg-gray-50">
-                    <td className="px-3 py-2">{created}</td>
-                    <td className="px-3 py-2">
-                      {invLink ? (
-                        <Link
-                          href={invLink}
-                          className="text-blue-600 hover:underline"
-                        >
-                          {invNum}
-                        </Link>
-                      ) : (
-                        invNum
-                      )}
-                    </td>
-                    <td className="px-3 py-2">{p.reference || "—"}</td>
-                    <td className="px-3 py-2">{amount}</td>
-                    <td className="px-3 py-2">
-                      <StatusBadge status={p.status} />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+          <ul className="space-y-3">
+            {rows.map((r) => {
+              const inv = r.invoice;
+              const invHref =
+                inv && inv.id ? `/tenant/invoices/${inv.id}` : undefined;
+              const created = new Date(r.created_at).toDateString();
+              const status = (r.status || "").toUpperCase();
+
+              return (
+                <li
+                  key={r.id}
+                  className="rounded-xl border p-4 hover:bg-gray-50"
+                >
+                  <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <div className="text-sm text-gray-600">
+                        {inv?.number ? (
+                          <>
+                            Invoice{" "}
+                            {invHref ? (
+                              <Link
+                                href={invHref}
+                                className="font-medium text-blue-600 hover:underline"
+                              >
+                                {inv.number}
+                              </Link>
+                            ) : (
+                              <span className="font-medium">{inv.number}</span>
+                            )}
+                          </>
+                        ) : (
+                          <span className="font-medium">Unlinked invoice</span>
+                        )}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {r.reference ? `Ref: ${r.reference} • ` : ""}
+                        Created {created}
+                        {inv?.due_date
+                          ? ` • Invoice due ${new Date(
+                              inv.due_date
+                            ).toDateString()}`
+                          : ""}
+                      </div>
+                    </div>
+
+                    <div className="mt-2 flex items-center gap-3 md:mt-0">
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-xs ${
+                          status === "CONFIRMED"
+                            ? "bg-green-100 text-green-700"
+                            : status === "PENDING"
+                            ? "bg-yellow-100 text-yellow-700"
+                            : "bg-gray-100 text-gray-700"
+                        }`}
+                        title={status || "—"}
+                      >
+                        {status || "—"}
+                      </span>
+                      <span className="font-semibold">
+                        {fmtMoney(r.amount_cents, r.currency)}
+                      </span>
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </>
       )}
     </div>
   );
