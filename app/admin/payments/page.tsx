@@ -1,7 +1,6 @@
 // app/admin/payments/page.tsx
 import { createRouteSupabase } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
-import { notFound } from "next/navigation";
 
 export const runtime = "nodejs";
 
@@ -30,7 +29,7 @@ async function requireStaffOrAdmin() {
     .eq("id", uid)
     .maybeSingle();
 
-  if (!me || !["staff", "admin"].includes(me.role)) return null;
+  if (!me || !["staff", "admin"].includes((me as any).role)) return null;
   return me as { id: string; role: "staff" | "admin"; email: string };
 }
 
@@ -48,8 +47,8 @@ async function loadPendingPayments(): Promise<PaymentRow[]> {
   return data as unknown as PaymentRow[];
 }
 
-// ---- SERVER ACTION: confirm a payment (no return value; keeps Next happy)
-export async function confirmPaymentAction(formData: FormData) {
+// ---- SERVER ACTION: confirm a payment (not exported)
+async function confirmPaymentAction(formData: FormData) {
   "use server";
   const paymentId = String(formData.get("paymentId") ?? "");
   if (!paymentId) return;
@@ -71,7 +70,7 @@ export async function confirmPaymentAction(formData: FormData) {
 
   // Mark payment confirmed (only if not already)
   const nowIso = new Date().toISOString();
-  const { data: payment, error: payErr } = await sb
+  const { data: payment } = await sb
     .from("payments")
     .update({ status: "confirmed", confirmed_at: nowIso })
     .eq("id", paymentId)
@@ -79,13 +78,7 @@ export async function confirmPaymentAction(formData: FormData) {
     .select("id, invoice_id, amount_cents, currency")
     .maybeSingle();
 
-  if (payErr || !payment) {
-    // nothing else to do; keep page stable
-    revalidatePath("/admin/payments");
-    return;
-  }
-
-  const invoiceId = (payment as any).invoice_id as string | null;
+  const invoiceId = (payment as any)?.invoice_id as string | null;
 
   // Flip invoice to PAID (simple MVP rule)
   if (invoiceId) {
@@ -114,8 +107,8 @@ export async function confirmPaymentAction(formData: FormData) {
       action: "payment.confirm",
       metadata: {
         invoice_id: invoiceId,
-        amount_cents: (payment as any).amount_cents,
-        currency: (payment as any).currency,
+        amount_cents: (payment as any)?.amount_cents,
+        currency: (payment as any)?.currency,
       },
     });
     if (invoiceId) {
