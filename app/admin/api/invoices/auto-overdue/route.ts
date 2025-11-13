@@ -9,9 +9,7 @@ const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 function getClient() {
   const jar = cookies();
   return createServerClient(URL, ANON, {
-    cookies: {
-      get: (name: string) => jar.get(name)?.value,
-    },
+    cookies: { get: (name: string) => jar.get(name)?.value },
   });
 }
 
@@ -21,27 +19,51 @@ async function requireStaffOrAdmin() {
   const uid = auth?.user?.id;
   if (!uid) return { ok: false as const, status: 401 as const, error: "unauthorized" };
 
-  const { data: me, error } = await sb
-    .from("profiles")
-    .select("role")
-    .eq("user_id", uid)
-    .maybeSingle();
-
-  if (error || !me) return { ok: false as const, status: 403 as const, error: "profile_not_found" };
-  if (!["staff", "admin"].includes(String(me.role))) {
+  const { data: me } = await sb.from("profiles").select("role").eq("user_id", uid).maybeSingle();
+  if (!me || !["staff", "admin"].includes(String(me.role))) {
     return { ok: false as const, status: 403 as const, error: "forbidden" };
   }
-  return { ok: true as const, sb, uid };
+  return { ok: true as const, sb };
 }
 
-export async function POST() {
+// Dry-run: count how many would flip
+export async function GET() {
   const guard = await requireStaffOrAdmin();
-  if (!guard.ok) {
-    return NextResponse.json({ error: guard.error }, { status: guard.status });
-  }
+  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
   const { sb } = guard;
 
-  // Past due = due_date < today (date-only compare); only from OPEN
+  const today = new Date().toISOString().slice(0, 10);
+
+  const { data, error } = await sb
+    .from("invoices")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "open")
+    .lt("due_date", today);
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  // Supabase returns count on head:true even though data is null
+  // Satisfy TS with nullish coalescing
+  const count = (data as any)?.length ?? (error as any)?.count ?? sb; // fallback noop; count returned separately
+  // Better: re-run without head to get length safely:
+  const { data: list } = await sb
+    .from("invoices")
+    .select("id")
+    .eq("status", "open")
+    .lt("due_date", today);
+  const n = Array.isArray(list) ? list.length : 0;
+
+  return NextResponse.json({ ok: true, would_update: n });
+}
+
+// Real run: perform update
+export async function POST() {
+  const guard = await requireStaffOrAdmin();
+  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
+  const { sb } = guard;
+
   const today = new Date().toISOString().slice(0, 10);
 
   const { data, error } = await sb
@@ -49,7 +71,7 @@ export async function POST() {
     .update({ status: "overdue", updated_at: new Date().toISOString() })
     .eq("status", "open")
     .lt("due_date", today)
-    .select("id"); // return updated ids for count
+    .select("id");
 
   if (error) {
     return NextResponse.json({ error: "update_failed", details: error.message }, { status: 500 });
