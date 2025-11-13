@@ -3,12 +3,12 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 
-const URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 function getClient() {
   const jar = cookies();
-  return createServerClient(URL, ANON, {
+  return createServerClient(SUPABASE_URL, SUPABASE_ANON, {
     cookies: { get: (name: string) => jar.get(name)?.value },
   });
 }
@@ -34,27 +34,15 @@ export async function GET() {
 
   const today = new Date().toISOString().slice(0, 10);
 
-  const { data, error } = await sb
-    .from("invoices")
-    .select("id", { count: "exact", head: true })
-    .eq("status", "open")
-    .lt("due_date", today);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  // Supabase returns count on head:true even though data is null
-  // Satisfy TS with nullish coalescing
-  const count = (data as any)?.length ?? (error as any)?.count ?? sb; // fallback noop; count returned separately
-  // Better: re-run without head to get length safely:
-  const { data: list } = await sb
+  const { data: list, error } = await sb
     .from("invoices")
     .select("id")
     .eq("status", "open")
     .lt("due_date", today);
-  const n = Array.isArray(list) ? list.length : 0;
 
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  const n = Array.isArray(list) ? list.length : 0;
   return NextResponse.json({ ok: true, would_update: n });
 }
 
