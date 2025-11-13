@@ -3,12 +3,12 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 
-const URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 function getClient() {
   const jar = cookies();
-  return createServerClient(URL, ANON, {
+  return createServerClient(SUPABASE_URL, SUPABASE_ANON, {
     cookies: { get: (name: string) => jar.get(name)?.value },
   });
 }
@@ -18,9 +18,11 @@ async function requireStaffOrAdmin() {
   const { data: auth } = await sb.auth.getUser();
   const uid = auth?.user?.id;
   if (!uid) return { ok: false as const, status: 401 as const, error: "unauthorized" };
+
   const { data: me } = await sb.from("profiles").select("role").eq("user_id", uid).maybeSingle();
-  if (!me || !["staff", "admin"].includes(String(me.role)))
+  if (!me || !["staff", "admin"].includes(String(me.role))) {
     return { ok: false as const, status: 403 as const, error: "forbidden" };
+  }
   return { ok: true as const, sb };
 }
 
@@ -29,7 +31,8 @@ export async function GET(req: Request) {
   if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
   const { sb } = guard;
 
-  const url = new URL(req.url);
+  // Use the global URL constructor explicitly to avoid any shadowing.
+  const url = new (globalThis as any).URL(req.url);
   const status = url.searchParams.get("status") || "";
   const currency = url.searchParams.get("currency") || "";
   const q = url.searchParams.get("q") || "";
@@ -54,41 +57,42 @@ export async function GET(req: Request) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   const rows = Array.isArray(data) ? data : [];
-  const lines = [
-    [
-      "payment_id",
-      "amount_cents",
-      "amount",
-      "currency",
-      "status",
-      "reference",
-      "created_at",
-      "confirmed_at",
-      "invoice_id",
-      "invoice_number",
-      "invoice_due_date",
-    ].join(","),
-    ...rows.map((r: any) => {
-      const inv = Array.isArray(r.invoice) ? r.invoice[0] : r.invoice;
-      const amount = ((Number(r.amount_cents ?? 0) || 0) / 100).toFixed(2);
-      const vals = [
-        r.id,
-        r.amount_cents ?? "",
-        amount,
-        r.currency ?? "",
-        r.status ?? "",
-        (r.reference ?? "").replaceAll(",", " "),
-        r.created_at ?? "",
-        r.confirmed_at ?? "",
-        inv?.id ?? "",
-        (inv?.number ?? "").replaceAll(",", " "),
-        inv?.due_date ?? "",
-      ];
-      return vals.join(",");
-    }),
-  ].join("\n");
+  const header = [
+    "payment_id",
+    "amount_cents",
+    "amount",
+    "currency",
+    "status",
+    "reference",
+    "created_at",
+    "confirmed_at",
+    "invoice_id",
+    "invoice_number",
+    "invoice_due_date",
+  ].join(",");
 
-  return new NextResponse(lines, {
+  const lines = rows.map((r: any) => {
+    const inv = Array.isArray(r.invoice) ? r.invoice[0] : r.invoice;
+    const amount = ((Number(r.amount_cents ?? 0) || 0) / 100).toFixed(2);
+    const vals = [
+      r.id ?? "",
+      r.amount_cents ?? "",
+      amount,
+      r.currency ?? "",
+      r.status ?? "",
+      String(r.reference ?? "").replaceAll(",", " "),
+      r.created_at ?? "",
+      r.confirmed_at ?? "",
+      inv?.id ?? "",
+      String(inv?.number ?? "").replaceAll(",", " "),
+      inv?.due_date ?? "",
+    ];
+    return vals.join(",");
+  });
+
+  const csv = [header, ...lines].join("\n");
+
+  return new NextResponse(csv, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": 'attachment; filename="payments.csv"',
