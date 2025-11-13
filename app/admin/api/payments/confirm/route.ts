@@ -2,103 +2,98 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
+import { sendEmail } from "@/lib/email";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+const URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const SITE = process.env.SITE_URL || "https://www.rentback.app";
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-export async function POST(req: Request) {
-  const cookieStore = cookies();
-  const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON, {
-    cookies: { get: (n: string) => cookieStore.get(n)?.value },
+function supabaseFromCookies() {
+  const jar = cookies();
+  return createServerClient(URL, ANON, {
+    cookies: { get: (n: string) => jar.get(n)?.value },
   });
+}
 
-  // Auth + role gate (server-side)
-  const { data: me } = await supabase.auth.getUser();
-  if (!me?.user) return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+async function requireStaff() {
+  const sb = supabaseFromCookies();
+  const { data: auth } = await sb.auth.getUser();
+  const uid = auth?.user?.id;
+  if (!uid) return { ok: false as const, status: 401 };
 
-  const { data: prof } = await supabase
+  const { data: prof } = await sb
     .from("profiles")
     .select("role")
-    .eq("user_id", me.user.id)
+    .eq("user_id", uid)
     .maybeSingle();
 
-  if (!prof || !["staff", "admin"].includes(String(prof.role))) {
-    return NextResponse.json({ error: "not_permitted" }, { status: 403 });
-  }
+  const role = String(prof?.role ?? "");
+  if (role !== "staff" && role !== "admin") return { ok: false as const, status: 403 };
 
-  const form = await req.formData();
-  const paymentId = String(form.get("paymentId") || "").trim();
-  const invoiceId = String(form.get("invoiceId") || "").trim();
+  return { ok: true as const, sb, uid };
+}
 
-  if (!paymentId || !invoiceId) {
-    const url = new URL("/admin/payments?error=invalid_payload", req.url);
-    return NextResponse.redirect(url, 303);
-  }
+function getFormOrJsonId: (req: Request) => Promise<string | null> {
+  return async (req: Request) => {
+    const ct = req.headers.get("content-type") || "";
+    if (ct.includes("application/x-www-form-urlencoded") || ct.includes("multipart/form-data")) {
+      const fd = await req.formData();
+      const id = fd.get("paymentId");
+      return typeof id === "string" ? id : null;
+    }
+    if (ct.includes("application/json")) {
+      const body = await req.json().catch(() => null);
+      const id = body?.paymentId ?? body?.id;
+      return typeof id === "string" ? id : null;
+    }
+    return null;
+  };
+}
 
-  // Load payment + invoice (RLS allows staff/admin)
-  const { data: payment, error: pErr } = await supabase
-    .from("payments")
-    .select("id, amount_cents, currency, status, invoice:invoices(id, number, tenant_id, status)")
-    .eq("id", paymentId)
-    .maybeSingle();
+export async function POST(req: Request) {
+  const guard = await requireStaff();
+  if (!guard.ok) return NextResponse.json({ error: "forbidden" }, { status: guard.status });
+  const sb = guard.sb;
 
-  if (pErr || !payment) {
-    const url = new URL("/admin/payments?error=payment_not_found", req.url);
-    return NextResponse.redirect(url, 303);
-  }
+  const paymentId = await getFormOrJsonId(req);
+  if (!paymentId) return NextResponse.json({ error: "invalid_payload" }, { status: 400 });
 
-  const inv = Array.isArray(payment.invoice) ? payment.invoice[0] : payment.invoice;
-  if (!inv || inv.id !== invoiceId) {
-    const url = new URL("/admin/payments?error=invoice_not_found", req.url);
-    return NextResponse.redirect(url, 303);
-  }
-
-  // Confirm payment
-  const { error: updErr } = await supabase
+  // 1) Confirm payment
+  const { data: updated, error: upErr } = await sb
     .from("payments")
     .update({ status: "confirmed", confirmed_at: new Date().toISOString() })
-    .eq("id", paymentId);
+    .eq("id", paymentId)
+    .select("id, amount_cents, currency, tenant_id, invoice_id")
+    .maybeSingle();
 
-  if (updErr) {
-    const url = new URL("/admin/payments?error=update_failed", req.url);
-    return NextResponse.redirect(url, 303);
+  if (upErr || !updated) {
+    return NextResponse.json({ error: "update_failed" }, { status: 400 });
   }
 
-  // (Simple MVP) Mark invoice paid as well
-  try {
-    await supabase.from("invoices").update({ status: "paid" }).eq("id", invoiceId);
-  } catch {
-    // ignore
+  // 2) Load invoice (number) and tenant email
+  const invoiceId = updated.invoice_id;
+  const [{ data: inv }, { data: tenant }] = await Promise.all([
+    sb.from("invoices").select("id, number").eq("id", invoiceId).maybeSingle(),
+    sb.from("profiles").select("email, full_name").eq("user_id", updated.tenant_id).maybeSingle(),
+  ]);
+
+  // 3) Email (no-op if EMAIL_PROVIDER=none)
+  if (tenant?.email && inv?.id) {
+    const receiptUrl = `${SITE}/api/tenant/invoices/${inv.id}/receipt`;
+    const amount =
+      typeof updated.amount_cents === "number" ? (updated.amount_cents / 100).toFixed(2) : String(updated.amount_cents);
+    const subject = `Payment confirmed — Invoice ${inv.number ?? inv.id}`;
+    const text =
+      `Hi${tenant.full_name ? " " + tenant.full_name : ""},\n\n` +
+      `Your payment of ${amount} ${String(updated.currency).toUpperCase()} was confirmed.\n` +
+      `Receipt: ${receiptUrl}\n\n` +
+      `Thanks,\nRentBack`;
+
+    await sendEmail({ to: tenant.email, subject, text });
   }
 
-  // Create receipt row (id auto, lightweight number)
-  try {
-    const rcptNo = `RCPT-${paymentId.slice(0, 8).toUpperCase()}`;
-    await supabase.from("receipts").insert({
-      invoice_id: invoiceId,
-      payment_id: paymentId,
-      number: rcptNo,
-    });
-  } catch {
-    // ignore if duplicate exists or any constraint hit
-  }
-
-  // Audit log (best-effort)
-  try {
-    await supabase.from("audit_log").insert({
-      actor_user_id: me.user.id,
-      action: "confirm_payment",
-      entity_table: "payments",
-      entity_id: paymentId,
-      metadata_json: { invoice_id: invoiceId },
-    });
-  } catch {
-    // ignore
-  }
-
-  const url = new URL("/admin/payments?ok=confirmed", req.url);
-  return NextResponse.redirect(url, 303);
+  // 4) Redirect back to Admin payments
+  const url = new URL(`${SITE}/admin/payments`);
+  url.searchParams.set("ok", "1");
+  return NextResponse.redirect(url, { status: 303 });
 }
