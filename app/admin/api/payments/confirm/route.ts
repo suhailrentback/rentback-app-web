@@ -2,100 +2,76 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
-import { sendEmail } from "@/lib/email";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const SITE = process.env.SITE_URL || "https://www.rentback.app";
+const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-function supabaseFromCookies() {
+function getClient() {
   const jar = cookies();
-  return createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    cookies: { get: (n: string) => jar.get(n)?.value },
+  return createServerClient(SUPABASE_URL, SUPABASE_ANON, {
+    cookies: { get: (name: string) => jar.get(name)?.value },
   });
 }
 
-async function requireStaff() {
-  const sb = supabaseFromCookies();
+async function requireStaffOrAdmin() {
+  const sb = getClient();
   const { data: auth } = await sb.auth.getUser();
   const uid = auth?.user?.id;
-  if (!uid) return { ok: false as const, status: 401 };
+  if (!uid) return { ok: false as const, status: 401 as const, error: "unauthorized" };
 
-  const { data: prof } = await sb
-    .from("profiles")
-    .select("role")
-    .eq("user_id", uid)
-    .maybeSingle();
-
-  const role = String(prof?.role ?? "");
-  if (role !== "staff" && role !== "admin") return { ok: false as const, status: 403 };
-
+  const { data: me } = await sb.from("profiles").select("role").eq("user_id", uid).maybeSingle();
+  if (!me || !["staff", "admin"].includes(String(me.role))) {
+    return { ok: false as const, status: 403 as const, error: "forbidden" };
+  }
   return { ok: true as const, sb, uid };
 }
 
 async function getFormOrJsonId(req: Request): Promise<string | null> {
   const ct = req.headers.get("content-type") || "";
   if (ct.includes("application/x-www-form-urlencoded") || ct.includes("multipart/form-data")) {
-    const fd = await req.formData();
-    const id = fd.get("paymentId");
-    return typeof id === "string" ? id : null;
+    const form = await req.formData();
+    const id = form.get("paymentId") ?? form.get("id");
+    return typeof id === "string" && id ? id : null;
   }
   if (ct.includes("application/json")) {
-    const body = await req.json().catch(() => null as any);
+    const body = await req.json().catch(() => null);
     const id = body?.paymentId ?? body?.id;
-    return typeof id === "string" ? id : null;
+    return typeof id === "string" && id ? id : null;
   }
-  // also allow query param as a fallback
-  const url = new globalThis.URL(req.url);
+  // query param fallback
+  const url = new (globalThis as any).URL(req.url);
   const qp = url.searchParams.get("paymentId") || url.searchParams.get("id");
   return typeof qp === "string" && qp ? qp : null;
 }
 
 export async function POST(req: Request) {
-  const guard = await requireStaff();
-  if (!guard.ok) return NextResponse.json({ error: "forbidden" }, { status: guard.status });
-  const sb = guard.sb;
+  const guard = await requireStaffOrAdmin();
+  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
+  const { sb } = guard;
 
-  const paymentId = await getFormOrJsonId(req);
-  if (!paymentId) return NextResponse.json({ error: "invalid_payload" }, { status: 400 });
+  const id = await getFormOrJsonId(req);
+  if (!id) return NextResponse.json({ error: "missing_payment_id" }, { status: 400 });
 
-  // 1) Confirm payment
-  const { data: updated, error: upErr } = await sb
+  // fetch payment + joined invoice
+  const { data: pay, error: perr } = await sb
     .from("payments")
-    .update({ status: "confirmed", confirmed_at: new Date().toISOString() })
-    .eq("id", paymentId)
-    .select("id, amount_cents, currency, tenant_id, invoice_id")
+    .select("id, status, invoice:invoices(id, number, due_date)")
+    .eq("id", id)
     .maybeSingle();
 
-  if (upErr || !updated) {
-    return NextResponse.json({ error: "update_failed" }, { status: 400 });
-  }
+  if (perr) return NextResponse.json({ error: "lookup_failed", details: perr.message }, { status: 500 });
+  if (!pay) return NextResponse.json({ error: "payment_not_found" }, { status: 404 });
 
-  // 2) Load invoice (number) and tenant email
-  const [{ data: inv }, { data: tenant }] = await Promise.all([
-    sb.from("invoices").select("id, number").eq("id", updated.invoice_id).maybeSingle(),
-    sb.from("profiles").select("email, full_name").eq("user_id", updated.tenant_id).maybeSingle(),
-  ]);
+  // update payment -> confirmed
+  const now = new Date().toISOString();
+  const { error: uerr } = await sb
+    .from("payments")
+    .update({ status: "confirmed", confirmed_at: now, updated_at: now })
+    .eq("id", id);
 
-  // 3) Email (no-op if email isn’t configured)
-  if (tenant?.email && inv?.id) {
-    const receiptUrl = `${SITE}/api/tenant/invoices/${inv.id}/receipt`;
-    const amount =
-      typeof updated.amount_cents === "number"
-        ? (updated.amount_cents / 100).toFixed(2)
-        : String(updated.amount_cents);
-    const subject = `Payment confirmed — Invoice ${inv.number ?? inv.id}`;
-    const text =
-      `Hi${tenant.full_name ? " " + tenant.full_name : ""},\n\n` +
-      `Your payment of ${amount} ${String(updated.currency).toUpperCase()} was confirmed.\n` +
-      `Receipt: ${receiptUrl}\n\n` +
-      `Thanks,\nRentBack`;
+  if (uerr) return NextResponse.json({ error: "update_failed", details: uerr.message }, { status: 500 });
 
-    await sendEmail({ to: tenant.email, subject, text });
-  }
-
-  // 4) Redirect back to Admin payments
-  const back = new URL(`${SITE}/admin/payments`);
-  back.searchParams.set("ok", "1");
-  return NextResponse.redirect(back, { status: 303 });
+  // redirect back to admin payments list preserving nothing (simple)
+  const back = "/admin/payments";
+  return NextResponse.redirect(back, 303);
 }
