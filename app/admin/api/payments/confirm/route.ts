@@ -4,13 +4,13 @@ import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 import { sendEmail } from "@/lib/email";
 
-const URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const SITE = process.env.SITE_URL || "https://www.rentback.app";
 
 function supabaseFromCookies() {
   const jar = cookies();
-  return createServerClient(URL, ANON, {
+  return createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     cookies: { get: (n: string) => jar.get(n)?.value },
   });
 }
@@ -33,7 +33,6 @@ async function requireStaff() {
   return { ok: true as const, sb, uid };
 }
 
-// Correct signature: function, not a typed variable declaration
 async function getFormOrJsonId(req: Request): Promise<string | null> {
   const ct = req.headers.get("content-type") || "";
   if (ct.includes("application/x-www-form-urlencoded") || ct.includes("multipart/form-data")) {
@@ -47,7 +46,7 @@ async function getFormOrJsonId(req: Request): Promise<string | null> {
     return typeof id === "string" ? id : null;
   }
   // also allow query param as a fallback
-  const url = new URL(req.url);
+  const url = new globalThis.URL(req.url);
   const qp = url.searchParams.get("paymentId") || url.searchParams.get("id");
   return typeof qp === "string" && qp ? qp : null;
 }
@@ -78,7 +77,7 @@ export async function POST(req: Request) {
     sb.from("profiles").select("email, full_name").eq("user_id", updated.tenant_id).maybeSingle(),
   ]);
 
-  // 3) Email (no-op if EMAIL_PROVIDER=none)
+  // 3) Email (no-op if email isn’t configured)
   if (tenant?.email && inv?.id) {
     const receiptUrl = `${SITE}/api/tenant/invoices/${inv.id}/receipt`;
     const amount =
