@@ -1,109 +1,97 @@
 // app/admin/api/payments/export/route.ts
+import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 
-export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
+const URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-function csvEscape(val: any): string {
-  if (val === null || val === undefined) return "";
-  const s = String(val);
-  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
+function getClient() {
+  const jar = cookies();
+  return createServerClient(URL, ANON, {
+    cookies: { get: (name: string) => jar.get(name)?.value },
+  });
 }
 
-export async function GET(_req: Request) {
-  const cookieStore = cookies();
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  const supabase = createServerClient(url, anon, {
-    cookies: {
-      get(name: string) {
-        return cookieStore.get(name)?.value;
-      },
-    },
-  });
+async function requireStaffOrAdmin() {
+  const sb = getClient();
+  const { data: auth } = await sb.auth.getUser();
+  const uid = auth?.user?.id;
+  if (!uid) return { ok: false as const, status: 401 as const, error: "unauthorized" };
+  const { data: me } = await sb.from("profiles").select("role").eq("user_id", uid).maybeSingle();
+  if (!me || !["staff", "admin"].includes(String(me.role)))
+    return { ok: false as const, status: 403 as const, error: "forbidden" };
+  return { ok: true as const, sb };
+}
 
-  // Guard: only staff/admin can export
-  const { data: me, error: meErr } = await supabase
-    .from("profiles")
-    .select("role, email")
-    .single();
+export async function GET(req: Request) {
+  const guard = await requireStaffOrAdmin();
+  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
+  const { sb } = guard;
 
-  if (meErr || !me || !["staff", "admin"].includes(String(me.role))) {
-    return new Response(JSON.stringify({ error: "forbidden" }), { status: 403 });
-  }
+  const url = new URL(req.url);
+  const status = url.searchParams.get("status") || "";
+  const currency = url.searchParams.get("currency") || "";
+  const q = url.searchParams.get("q") || "";
+  const from = url.searchParams.get("from") || "";
+  const to = url.searchParams.get("to") || "";
 
-  const { data, error } = await supabase
+  let query = sb
     .from("payments")
     .select(
-      `
-      id, amount_cents, currency, status, reference, created_at, confirmed_at,
-      invoice:invoices!payments_invoice_id_fkey ( id, number, due_date )
-    `
+      "id, amount_cents, currency, status, reference, created_at, confirmed_at, invoice:invoices(id, number, due_date)"
     )
     .order("created_at", { ascending: false })
-    .limit(1000);
+    .limit(2000);
 
-  if (error) {
-    return new Response(JSON.stringify({ error: "select_failed", detail: error.message }), { status: 500 });
-  }
+  if (status) query = query.eq("status", status);
+  if (currency) query = query.eq("currency", currency);
+  if (q) query = query.ilike("reference", `%${q}%`);
+  if (from) query = query.gte("created_at", `${from}T00:00:00Z`);
+  if (to) query = query.lte("created_at", `${to}T23:59:59Z`);
 
-  const rows = (data ?? []).map((d: any) => {
-    const inv = Array.isArray(d.invoice) ? (d.invoice[0] ?? null) : d.invoice ?? null;
-    return {
-      id: d.id ?? "",
-      amount_cents: d.amount_cents ?? "",
-      currency: d.currency ?? "",
-      status: d.status ?? "",
-      reference: d.reference ?? "",
-      created_at: d.created_at ?? "",
-      confirmed_at: d.confirmed_at ?? "",
-      invoice_id: inv?.id ?? "",
-      invoice_number: inv?.number ?? "",
-      invoice_due_date: inv?.due_date ?? "",
-    };
-  });
+  const { data, error } = await query;
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const header = [
-    "payment_id",
-    "amount_cents",
-    "currency",
-    "status",
-    "reference",
-    "created_at",
-    "confirmed_at",
-    "invoice_id",
-    "invoice_number",
-    "invoice_due_date",
-  ];
-
-  const csv = [
-    header.join(","),
-    ...rows.map((r) =>
-      [
+  const rows = Array.isArray(data) ? data : [];
+  const lines = [
+    [
+      "payment_id",
+      "amount_cents",
+      "amount",
+      "currency",
+      "status",
+      "reference",
+      "created_at",
+      "confirmed_at",
+      "invoice_id",
+      "invoice_number",
+      "invoice_due_date",
+    ].join(","),
+    ...rows.map((r: any) => {
+      const inv = Array.isArray(r.invoice) ? r.invoice[0] : r.invoice;
+      const amount = ((Number(r.amount_cents ?? 0) || 0) / 100).toFixed(2);
+      const vals = [
         r.id,
-        r.amount_cents,
-        r.currency,
-        r.status,
-        r.reference,
-        r.created_at,
-        r.confirmed_at,
-        r.invoice_id,
-        r.invoice_number,
-        r.invoice_due_date,
-      ].map(csvEscape).join(",")
-    ),
+        r.amount_cents ?? "",
+        amount,
+        r.currency ?? "",
+        r.status ?? "",
+        (r.reference ?? "").replaceAll(",", " "),
+        r.created_at ?? "",
+        r.confirmed_at ?? "",
+        inv?.id ?? "",
+        (inv?.number ?? "").replaceAll(",", " "),
+        inv?.due_date ?? "",
+      ];
+      return vals.join(",");
+    }),
   ].join("\n");
 
-  const filename = `payments_export_${new Date().toISOString().slice(0, 10)}.csv`;
-
-  return new Response(csv, {
-    status: 200,
+  return new NextResponse(lines, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="${filename}"`,
-      "Cache-Control": "no-store",
+      "Content-Disposition": 'attachment; filename="payments.csv"',
     },
   });
 }
