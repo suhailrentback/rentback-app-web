@@ -2,286 +2,199 @@
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-type SearchParams = {
-  q?: string;
-  status?: string;
-  from?: string;
-  to?: string;
-  sort?: "due_date" | "issued_at" | "total_amount" | "number";
-  dir?: "asc" | "desc";
-  page?: string;
-};
-
-type InvoiceRow = {
+type Invoice = {
   id: string;
   number: string | null;
-  status: string | null;
-  issued_at: string | null;
-  due_date: string | null;
-  total_amount: number | null;
+  amount_cents: number | null;
   currency: string | null;
-  description?: string | null;
+  status: string | null; // open | issued | overdue | paid
+  due_date: string | null; // YYYY-MM-DD
+  created_at: string;
 };
 
-function formatDate(iso?: string | null) {
-  return iso ? new Date(iso).toDateString() : "—";
+function fmtAmt(cents?: number | null, ccy?: string | null) {
+  const v = ((Number(cents || 0)) / 100).toFixed(2);
+  return `${v} ${ccy || ""}`.trim();
 }
-function formatMoney(amount?: number | null, ccy?: string | null) {
-  if (amount == null) return "—";
-  const value = typeof amount === "number" ? amount : Number(amount);
-  return `${value} ${String(ccy ?? "").toUpperCase()}`;
+
+function keep(params: Record<string, string | string[] | undefined>, patch: Record<string, string>) {
+  const usp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params || {})) {
+    if (typeof v === "string") usp.set(k, v);
+    if (Array.isArray(v)) v.forEach((x) => usp.append(k, x));
+  }
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === "") usp.delete(k);
+    else usp.set(k, v);
+  }
+  return `?${usp.toString()}`;
 }
 
 export default async function TenantInvoicesPage({
   searchParams,
 }: {
-  searchParams: SearchParams;
+  searchParams?: Record<string, string | string[] | undefined>;
 }) {
-  // defaults
-  const q = (searchParams.q ?? "").trim();
-  const status = (searchParams.status ?? "").toLowerCase();
-  const from = searchParams.from ? new Date(searchParams.from) : null;
-  const to = searchParams.to ? new Date(searchParams.to) : null;
-  const sort = (searchParams.sort as SearchParams["sort"]) || "due_date";
-  const dir = (searchParams.dir as SearchParams["dir"]) || "desc";
-  const page = Math.max(1, parseInt(searchParams.page || "1", 10) || 1);
-  const pageSize = 10;
-  const fromIdx = (page - 1) * pageSize;
-  const toIdx = fromIdx + pageSize - 1;
-
   const jar = cookies();
-  const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  const sb = createServerClient(SUPABASE_URL, SUPABASE_ANON, {
     cookies: { get: (name: string) => jar.get(name)?.value },
   });
 
-  const { data: auth } = await supabase.auth.getUser();
+  const { data: auth } = await sb.auth.getUser();
   const uid = auth?.user?.id;
-  if (!uid) {
-    return (
-      <div className="mx-auto w-full max-w-3xl p-6">
-        <h1 className="text-xl font-semibold mb-2">Invoices</h1>
-        <p className="text-sm text-gray-600">
-          Please sign in to view your invoices.
-        </p>
-      </div>
-    );
-  }
+  if (!uid) redirect("/not-permitted");
 
-  // Build query
-  let query = supabase
+  // Soft role check; RLS still enforces
+  const { data: me } = await sb.from("profiles").select("role").eq("user_id", uid).maybeSingle();
+  if (!me) redirect("/not-permitted");
+
+  // Filters/sort/paging
+  const q = (searchParams?.q as string) || ""; // search by invoice number
+  const status = (searchParams?.status as string) || ""; // open/issued/overdue/paid
+  const sort = (searchParams?.sort as string) || "due_desc"; // due_desc | due_asc | created_desc | created_asc
+  const page = Math.max(1, parseInt(((searchParams?.page as string) || "1"), 10) || 1);
+  const limit = 20;
+  const start = (page - 1) * limit;
+  const end = start + limit - 1;
+
+  let query = sb
     .from("invoices")
-    .select(
-      "id, number, status, issued_at, due_date, total_amount, currency, description",
-      { count: "exact" }
-    )
+    .select("id, number, amount_cents, currency, status, due_date, created_at")
     .eq("tenant_id", uid);
 
-  if (status && ["open", "paid", "overdue", "issued", "draft"].includes(status)) {
-    query = query.eq("status", status);
-  }
-  if (from) {
-    query = query.gte("due_date", from.toISOString());
-  }
-  if (to) {
-    const end = new Date(to);
-    end.setHours(23, 59, 59, 999);
-    query = query.lte("due_date", end.toISOString());
-  }
-  if (q) {
-    query = query.or(`number.ilike.%${q}%,description.ilike.%${q}%`);
-  }
+  if (q) query = query.ilike("number", `%${q}%`);
+  if (status) query = query.eq("status", status);
 
   // sort
-  const allowedSort: Record<string, true> = {
-    due_date: true,
-    issued_at: true,
-    total_amount: true,
-    number: true,
-  };
-  const sortCol = allowedSort[sort] ? sort : "due_date";
-  query = query.order(sortCol as any, { ascending: dir === "asc", nullsFirst: false });
+  switch (sort) {
+    case "due_asc":
+      query = query.order("due_date", { ascending: true, nullsFirst: false });
+      break;
+    case "created_asc":
+      query = query.order("created_at", { ascending: true, nullsFirst: false });
+      break;
+    case "created_desc":
+      query = query.order("created_at", { ascending: false, nullsFirst: false });
+      break;
+    case "due_desc":
+    default:
+      query = query.order("due_date", { ascending: false, nullsFirst: false });
+  }
 
-  // paginate
-  query = query.range(fromIdx, toIdx);
-
-  const { data, count, error } = await query;
-
+  const { data, error } = await query.range(start, end);
   if (error) {
     return (
-      <div className="mx-auto w-full max-w-3xl p-6">
-        <h1 className="text-xl font-semibold mb-2">Invoices</h1>
-        <p className="text-sm text-red-600">Failed to load invoices.</p>
-        <pre className="mt-3 rounded bg-gray-100 p-3 text-xs overflow-auto">
-          {error.message}
-        </pre>
+      <div className="mx-auto w-full max-w-4xl p-4 md:p-6">
+        <div className="mb-3 flex items-center justify-between">
+          <h1 className="text-xl font-semibold">My Invoices</h1>
+          <Link href="/tenant" className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50">
+            ← Tenant home
+          </Link>
+        </div>
+        <p className="rounded-md bg-red-50 p-3 text-sm text-red-700">Failed to load: {error.message}</p>
       </div>
     );
   }
 
-  const rows = (data as unknown as InvoiceRow[]) || [];
-  const total = typeof count === "number" ? count : rows.length;
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-
-  const buildUrl = (nextPage: number, extras?: Record<string, string | undefined>) => {
-    const sp = new URLSearchParams();
-    if (q) sp.set("q", q);
-    if (status) sp.set("status", status);
-    if (searchParams.from) sp.set("from", searchParams.from);
-    if (searchParams.to) sp.set("to", searchParams.to);
-    if (sort) sp.set("sort", sort);
-    if (dir) sp.set("dir", dir);
-    sp.set("page", String(nextPage));
-    if (extras) {
-      for (const [k, v] of Object.entries(extras)) {
-        if (v == null || v === "") sp.delete(k);
-        else sp.set(k, v);
-      }
-    }
-    const qs = sp.toString();
-    return qs ? `/tenant/invoices?${qs}` : `/tenant/invoices`;
-  };
+  const rows = (data || []) as Invoice[];
+  const hasNext = rows.length === limit;
+  const hasPrev = page > 1;
 
   return (
-    <div className="mx-auto w-full max-w-3xl p-4 md:p-6">
-      <h1 className="text-xl font-semibold mb-4">Invoices</h1>
+    <div className="mx-auto w-full max-w-4xl p-4 md:p-6">
+      <div className="mb-3 flex items-center justify-between">
+        <h1 className="text-xl font-semibold">My Invoices</h1>
+        <Link href="/tenant" className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50">
+          ← Tenant home
+        </Link>
+      </div>
 
       {/* Filters */}
-      <form
-        method="GET"
-        action="/tenant/invoices"
-        className="mb-4 grid grid-cols-1 gap-2 md:grid-cols-6"
-      >
+      <form className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
         <input
-          className="col-span-2 rounded-xl border px-3 py-2 text-sm"
-          type="text"
           name="q"
-          placeholder="Search number or description"
+          placeholder="Search invoice #"
           defaultValue={q}
+          className="rounded-lg border px-3 py-2 text-sm"
         />
-        <select
-          name="status"
-          defaultValue={status}
-          className="rounded-xl border px-3 py-2 text-sm"
-        >
-          <option value="">All statuses</option>
+        <select name="status" defaultValue={status} className="rounded-lg border px-3 py-2 text-sm">
+          <option value="">Any status</option>
           <option value="open">Open</option>
-          <option value="paid">Paid</option>
+          <option value="issued">Issued</option>
           <option value="overdue">Overdue</option>
+          <option value="paid">Paid</option>
         </select>
-        <input
-          className="rounded-xl border px-3 py-2 text-sm"
-          type="date"
-          name="from"
-          defaultValue={searchParams.from ?? ""}
-        />
-        <input
-          className="rounded-xl border px-3 py-2 text-sm"
-          type="date"
-          name="to"
-          defaultValue={searchParams.to ?? ""}
-        />
-        <div className="flex gap-2">
-          <select
-            name="sort"
-            defaultValue={sort}
-            className="flex-1 rounded-xl border px-3 py-2 text-sm"
-          >
-            <option value="due_date">Sort: Due date</option>
-            <option value="issued_at">Sort: Issued</option>
-            <option value="total_amount">Sort: Amount</option>
-            <option value="number">Sort: Number</option>
-          </select>
-          <select
-            name="dir"
-            defaultValue={dir}
-            className="rounded-xl border px-3 py-2 text-sm"
-          >
-            <option value="desc">Desc</option>
-            <option value="asc">Asc</option>
-          </select>
-        </div>
-        {/* reset page to 1 on every search */}
-        <input type="hidden" name="page" value="1" />
-        <div className="md:col-span-6 flex gap-2">
-          <button
-            className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
-            type="submit"
-          >
-            Apply
-          </button>
-          <Link
-            href="/tenant/invoices"
-            className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
-          >
-            Reset
-          </Link>
+        <select name="sort" defaultValue={sort} className="rounded-lg border px-3 py-2 text-sm">
+          <option value="due_desc">Due date (newest)</option>
+          <option value="due_asc">Due date (oldest)</option>
+          <option value="created_desc">Created (newest)</option>
+          <option value="created_asc">Created (oldest)</option>
+        </select>
+        <div>
+          <button className="w-full rounded-lg border px-3 py-2 text-sm hover:bg-gray-50">Apply</button>
         </div>
       </form>
 
-      {/* Results */}
-      {rows.length === 0 ? (
-        <div className="rounded-2xl border p-6 text-sm text-gray-600">
-          No invoices match your filters.
-        </div>
-      ) : (
-        <ul className="space-y-3">
-          {rows.map((inv) => (
-            <li key={inv.id} className="rounded-2xl border p-4">
-              <div className="flex items-center justify-between">
-                <div className="font-medium">
-                  {inv.number ?? inv.id}
-                  <span className="ml-2 rounded-full border px-2 py-0.5 text-xs">
-                    {String(inv.status ?? "").toUpperCase() || "—"}
-                  </span>
-                </div>
-                <Link href={`/tenant/invoices/${inv.id}`} className="text-sm underline">
-                  View
-                </Link>
-              </div>
-              <div className="mt-2 text-sm text-gray-700">
-                <div>Issued: {formatDate(inv.issued_at)}</div>
-                <div>Due: {formatDate(inv.due_date)}</div>
-                <div>Total: {formatMoney(inv.total_amount, inv.currency)}</div>
-                {inv.description ? (
-                  <div className="mt-1 text-gray-600">{inv.description}</div>
-                ) : null}
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+      <div className="overflow-x-auto">
+        <table className="min-w-full border text-sm">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="border px-2 py-1 text-left">Number</th>
+              <th className="border px-2 py-1 text-left">Due date</th>
+              <th className="border px-2 py-1 text-left">Amount</th>
+              <th className="border px-2 py-1 text-left">Status</th>
+              <th className="border px-2 py-1 text-left">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((inv) => (
+              <tr key={inv.id}>
+                <td className="border px-2 py-1">{inv.number || "—"}</td>
+                <td className="border px-2 py-1">{inv.due_date || "—"}</td>
+                <td className="border px-2 py-1">{fmtAmt(inv.amount_cents, inv.currency)}</td>
+                <td className="border px-2 py-1">{inv.status || "—"}</td>
+                <td className="border px-2 py-1">
+                  <Link className="text-blue-600 underline" href={`/tenant/invoices/${inv.id}`}>
+                    View
+                  </Link>
+                </td>
+              </tr>
+            ))}
+            {!rows.length && (
+              <tr>
+                <td className="border px-2 py-4 text-center" colSpan={5}>
+                  No invoices found.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
 
       {/* Pager */}
-      <div className="mt-4 flex items-center justify-between text-sm">
-        <div>
-          Page {page} of {totalPages}
-        </div>
-        <div className="flex gap-2">
-          <Link
-            aria-disabled={page <= 1}
-            href={buildUrl(Math.max(1, page - 1))}
-            className={`rounded-xl border px-3 py-2 ${
-              page <= 1 ? "pointer-events-none opacity-50" : "hover:bg-gray-50"
-            }`}
-          >
-            Prev
-          </Link>
-          <Link
-            aria-disabled={page >= totalPages}
-            href={buildUrl(Math.min(totalPages, page + 1))}
-            className={`rounded-xl border px-3 py-2 ${
-              page >= totalPages
-                ? "pointer-events-none opacity-50"
-                : "hover:bg-gray-50"
-            }`}
-          >
-            Next
-          </Link>
-        </div>
+      <div className="mt-4 flex items-center justify-between">
+        <Link
+          href={keep(searchParams || {}, { page: String(Math.max(1, page - 1)) })}
+          className="rounded border px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50"
+          aria-disabled={!hasPrev}
+          onClick={(e) => { if (!hasPrev) e.preventDefault(); }}
+        >
+          ← Prev
+        </Link>
+        <span className="text-sm text-gray-600">Page {page}</span>
+        <Link
+          href={keep(searchParams || {}, { page: String(page + 1) })}
+          className="rounded border px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50"
+          aria-disabled={!hasNext}
+          onClick={(e) => { if (!hasNext) e.preventDefault(); }}
+        >
+          Next →
+        </Link>
       </div>
     </div>
   );
