@@ -13,26 +13,32 @@ const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 function getSb() {
   const jar = cookies();
-  const sb = createServerClient(SUPABASE_URL, SUPABASE_ANON, {
+  return createServerClient(SUPABASE_URL, SUPABASE_ANON, {
     cookies: {
       get: (name: string) => jar.get(name)?.value,
       set() {},
       remove() {},
     },
   });
-  return sb;
 }
 
 async function readPaymentId(req: Request) {
   const ct = req.headers.get("content-type") || "";
+  // JSON body
   if (ct.includes("application/json")) {
     const j = await req.json().catch(() => null);
     if (j && typeof j.paymentId === "string") return j.paymentId as string;
   }
-  const fd = await req.formData().catch(() => null);
-  const val = fd?.get("paymentId");
-  if (typeof val === "string" && val) return val;
-  return null;
+  // Form body
+  if (ct.includes("application/x-www-form-urlencoded") || ct.includes("multipart/form-data")) {
+    const fd = await req.formData().catch(() => null);
+    const val = fd?.get("paymentId");
+    if (typeof val === "string" && val) return val;
+  }
+  // Query param fallback
+  const url = new URL(req.url);
+  const qp = url.searchParams.get("paymentId") || url.searchParams.get("id");
+  return typeof qp === "string" && qp ? qp : null;
 }
 
 async function guardStaff() {
@@ -58,6 +64,28 @@ function normalizeOne<T>(x: T | T[] | null | undefined): T | null {
   return (x ?? null) as T | null;
 }
 
+type PaymentRow = {
+  id: string;
+  amount_cents: number | null;
+  currency: string | null;
+  status: string | null;
+  reference: string | null;
+  created_at: string | null;
+  confirmed_at: string | null;
+  tenant_id: string | null;
+  // Supabase relation may be object OR array; we keep it as unknown and normalize.
+  invoice?: unknown;
+};
+
+type InvoiceRel = {
+  id: string;
+  number: string | number;
+  amount_cents?: number | null;
+  currency?: string | null;
+  due_date?: string | null;
+  tenant_id?: string | null;
+};
+
 export async function POST(req: Request) {
   // Guard
   const g = await guardStaff();
@@ -68,8 +96,8 @@ export async function POST(req: Request) {
   const paymentId = await readPaymentId(req);
   if (!paymentId) return NextResponse.json({ error: "missing_payment_id" }, { status: 400 });
 
-  // Load payment + related invoice (normalize relation shape)
-  const { data: payment, error: loadErr } = await sb
+  // Load payment + related invoice (be explicit on FK alias; we’ll normalize the shape)
+  const { data, error: loadErr } = await sb
     .from("payments")
     .select(
       [
@@ -81,7 +109,6 @@ export async function POST(req: Request) {
         "created_at",
         "confirmed_at",
         "tenant_id",
-        // be explicit about FK; still normalize for safety
         "invoice:invoices!payments_invoice_id_fkey(id,number,amount_cents,currency,due_date,tenant_id)",
       ].join(",")
     )
@@ -89,9 +116,12 @@ export async function POST(req: Request) {
     .maybeSingle();
 
   if (loadErr) return NextResponse.json({ error: "load_payment_failed", detail: loadErr.message }, { status: 500 });
-  if (!payment) return NextResponse.json({ error: "payment_not_found" }, { status: 404 });
+  if (!data) return NextResponse.json({ error: "payment_not_found" }, { status: 404 });
 
-  const invoice = normalizeOne(payment.invoice as any);
+  // 🔒 Narrow away the GenericStringError union before property access
+  const payment = data as unknown as PaymentRow;
+
+  const invoice = normalizeOne(payment.invoice as InvoiceRel | InvoiceRel[] | null);
   if (!invoice || !invoice.id) {
     return NextResponse.json({ error: "invoice_not_found" }, { status: 400 });
   }
@@ -110,7 +140,7 @@ export async function POST(req: Request) {
   // Mark invoice paid
   await sb.from("invoices").update({ status: "PAID" }).eq("id", invoice.id);
 
-  // Lookup tenant email (prefer payment.tenant_id, otherwise invoice.tenant_id)
+  // Lookup tenant email (prefer payment.tenant_id, else invoice.tenant_id)
   const tenantId = (payment.tenant_id as string) || (invoice.tenant_id as string) || null;
   let tenantEmail: string | null = null;
   if (tenantId) {
@@ -125,18 +155,18 @@ export async function POST(req: Request) {
   // Build receipt PDF buffer
   const pdfBuf = await buildReceiptPDFBuffer(
     {
-      id: invoice.id as string,
+      id: invoice.id,
       number: String(invoice.number),
       amount_cents: Number(invoice.amount_cents ?? payment.amount_cents ?? 0),
       currency: String(invoice.currency ?? payment.currency ?? "PKR"),
-      due_date: (invoice.due_date as string) || null,
+      due_date: invoice.due_date || null,
     },
     {
-      id: payment.id as string,
+      id: payment.id,
       amount_cents: Number(payment.amount_cents ?? 0),
       currency: String(payment.currency ?? invoice.currency ?? "PKR"),
-      reference: (payment.reference as string) || null,
-      created_at: (payment.created_at as string) || null,
+      reference: payment.reference || null,
+      created_at: payment.created_at || null,
       confirmed_at: nowIso,
     },
     tenantEmail
@@ -146,17 +176,17 @@ export async function POST(req: Request) {
   if (tenantEmail) {
     const html = `
       <p>Hi,</p>
-      <p>Your payment has been confirmed for invoice <strong>${invoice.number}</strong>.</p>
+      <p>Your payment has been confirmed for invoice <strong>${String(invoice.number)}</strong>.</p>
       <p>The receipt PDF is attached for your records.</p>
       <p>— RentBack</p>
     `;
     await sendEmailResend({
       to: tenantEmail,
-      subject: `Receipt for ${invoice.number}`,
+      subject: `Receipt for ${String(invoice.number)}`,
       html,
       attachments: [
         {
-          filename: `receipt-${invoice.number}.pdf`,
+          filename: `receipt-${String(invoice.number)}.pdf`,
           contentType: "application/pdf",
           contentBase64: Buffer.from(pdfBuf).toString("base64"),
         },
