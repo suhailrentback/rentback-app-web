@@ -1,20 +1,31 @@
 // app/tenant/invoices/page.tsx
+import Link from "next/link";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
-import Link from "next/link";
-import { redirect } from "next/navigation";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-type Invoice = {
+type Raw = {
   id: string;
   number: string | null;
+  description: string | null;
+  status: string | null;
   amount_cents: number | null;
   currency: string | null;
-  status: string | null; // open | issued | overdue | paid
-  due_date: string | null; // YYYY-MM-DD
-  created_at: string;
+  due_date: string | null;
+  created_at: string | null;
+};
+
+type Row = {
+  id: string;
+  number: string;
+  description: string | null;
+  status: string;
+  amountCents: number;
+  currency: string;
+  dueDate: string | null;
+  createdAt: string | null;
 };
 
 function fmtAmt(cents?: number | null, ccy?: string | null) {
@@ -22,179 +33,245 @@ function fmtAmt(cents?: number | null, ccy?: string | null) {
   return `${v} ${ccy || ""}`.trim();
 }
 
-function keep(params: Record<string, string | string[] | undefined>, patch: Record<string, string>) {
-  const usp = new URLSearchParams();
-  for (const [k, v] of Object.entries(params || {})) {
-    if (typeof v === "string") usp.set(k, v);
-    if (Array.isArray(v)) v.forEach((x) => usp.append(k, x));
+function badge(status: string) {
+  const s = (status || "").toLowerCase();
+  const cls =
+    s === "paid"
+      ? "bg-green-100 text-green-700"
+      : s === "open"
+      ? "bg-yellow-100 text-yellow-800"
+      : s === "overdue"
+      ? "bg-red-100 text-red-700"
+      : "bg-gray-100 text-gray-700";
+  const label = s ? s[0].toUpperCase() + s.slice(1) : "—";
+  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}>{label}</span>;
+}
+
+function qparams(base: Record<string, string | number | undefined>, overrides: Record<string, string | number | undefined>) {
+  const merged = { ...base, ...overrides };
+  const sp = new URLSearchParams();
+  Object.entries(merged).forEach(([k, v]) => {
+    if (v !== undefined && v !== "" && v !== null) sp.set(k, String(v));
+  });
+  const s = sp.toString();
+  return s ? `?${s}` : "";
+}
+
+async function fetchRows(search: {
+  tenantId: string;
+  q?: string;
+  status?: string;
+  sort?: string;
+  dir?: "asc" | "desc";
+  page?: number;
+  pageSize?: number;
+}) {
+  const jar = cookies();
+  const sb = createServerClient(SUPABASE_URL, SUPABASE_ANON, {
+    cookies: { get: (n: string) => jar.get(n)?.value },
+  });
+
+  const page = Math.max(1, Number(search.page || 1));
+  const pageSize = Math.min(50, Math.max(5, Number(search.pageSize || 10)));
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+
+  let query = sb
+    .from("invoices")
+    .select("id,number,description,status,amount_cents,currency,due_date,created_at", { count: "exact" })
+    .eq("tenant_id", search.tenantId);
+
+  const q = (search.q || "").trim();
+  if (q) {
+    // number OR description ilike
+    query = query.or(`number.ilike.%${q}%,description.ilike.%${q}%`);
   }
-  for (const [k, v] of Object.entries(patch)) {
-    if (v === "") usp.delete(k);
-    else usp.set(k, v);
+
+  const st = (search.status || "").toUpperCase();
+  if (st && st !== "ALL") {
+    query = query.eq("status", st);
   }
-  return `?${usp.toString()}`;
+
+  const sort = (search.sort || "due_date") as "due_date" | "created_at" | "amount_cents";
+  const dir = (search.dir || "desc") as "asc" | "desc";
+  query = query.order(sort, { ascending: dir === "asc" });
+
+  query = query.range(from, to);
+
+  const { data, error, count } = await query;
+  if (error) return { rows: [] as Row[], count: 0, page, pageSize };
+
+  const raw: Raw[] = Array.isArray(data) ? ((data as unknown) as Raw[]) : [];
+  const rows: Row[] = raw.map((r) => ({
+    id: r.id,
+    number: r.number || "(no number)",
+    description: r.description || null,
+    status: r.status || "OPEN",
+    amountCents: Number(r.amount_cents || 0),
+    currency: r.currency || "PKR",
+    dueDate: r.due_date || null,
+    createdAt: r.created_at || null,
+  }));
+  return { rows, count: count || 0, page, pageSize };
 }
 
 export default async function TenantInvoicesPage({
   searchParams,
 }: {
-  searchParams?: Record<string, string | string[] | undefined>;
+  searchParams: { [key: string]: string | string[] | undefined };
 }) {
   const jar = cookies();
   const sb = createServerClient(SUPABASE_URL, SUPABASE_ANON, {
-    cookies: { get: (name: string) => jar.get(name)?.value },
+    cookies: { get: (n: string) => jar.get(n)?.value },
   });
 
   const { data: auth } = await sb.auth.getUser();
   const uid = auth?.user?.id;
-  if (!uid) redirect("/not-permitted");
-
-  // Soft role check; RLS still enforces
-  const { data: me } = await sb.from("profiles").select("role").eq("user_id", uid).maybeSingle();
-  if (!me) redirect("/not-permitted");
-
-  // Filters/sort/paging
-  const q = (searchParams?.q as string) || ""; // search by invoice number
-  const status = (searchParams?.status as string) || ""; // open/issued/overdue/paid
-  const sort = (searchParams?.sort as string) || "due_desc"; // due_desc | due_asc | created_desc | created_asc
-  const page = Math.max(1, parseInt(((searchParams?.page as string) || "1"), 10) || 1);
-  const limit = 20;
-  const start = (page - 1) * limit;
-  const end = start + limit - 1;
-
-  let query = sb
-    .from("invoices")
-    .select("id, number, amount_cents, currency, status, due_date, created_at")
-    .eq("tenant_id", uid);
-
-  if (q) query = query.ilike("number", `%${q}%`);
-  if (status) query = query.eq("status", status);
-
-  // sort
-  switch (sort) {
-    case "due_asc":
-      query = query.order("due_date", { ascending: true, nullsFirst: false });
-      break;
-    case "created_asc":
-      query = query.order("created_at", { ascending: true, nullsFirst: false });
-      break;
-    case "created_desc":
-      query = query.order("created_at", { ascending: false, nullsFirst: false });
-      break;
-    case "due_desc":
-    default:
-      query = query.order("due_date", { ascending: false, nullsFirst: false });
-  }
-
-  const { data, error } = await query.range(start, end);
-  if (error) {
+  if (!uid) {
     return (
-      <div className="mx-auto w-full max-w-4xl p-4 md:p-6">
-        <div className="mb-3 flex items-center justify-between">
-          <h1 className="text-xl font-semibold">My Invoices</h1>
-          <Link href="/tenant" className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50">
-            ← Tenant home
-          </Link>
-        </div>
-        <p className="rounded-md bg-red-50 p-3 text-sm text-red-700">Failed to load: {error.message}</p>
+      <div className="mx-auto max-w-3xl p-6">
+        <p>Please sign in.</p>
       </div>
     );
   }
 
-  const rows = (data || []) as Invoice[];
-  const hasNext = rows.length === limit;
-  const hasPrev = page > 1;
+  const q = (searchParams.q as string) || "";
+  const status = (searchParams.status as string) || "ALL";
+  const sort = (searchParams.sort as string) || "due_date";
+  const dir = ((searchParams.dir as string) || "desc") as "asc" | "desc";
+  const page = Number(searchParams.page || 1);
+  const baseQP = { q, status, sort, dir, page };
+
+  const { rows, count, pageSize } = await fetchRows({
+    tenantId: uid,
+    q,
+    status,
+    sort,
+    dir,
+    page,
+    pageSize: 10,
+  });
+
+  const totalPages = Math.max(1, Math.ceil(count / pageSize));
 
   return (
-    <div className="mx-auto w-full max-w-4xl p-4 md:p-6">
-      <div className="mb-3 flex items-center justify-between">
+    <div className="mx-auto w-full max-w-5xl p-4 md:p-6">
+      <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <h1 className="text-xl font-semibold">My Invoices</h1>
-        <Link href="/tenant" className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50">
-          ← Tenant home
-        </Link>
+        <form method="GET" className="flex flex-wrap items-end gap-2">
+          <div className="flex flex-col">
+            <label className="mb-1 text-xs text-gray-600">Search</label>
+            <input
+              name="q"
+              defaultValue={q}
+              placeholder="Number or description"
+              className="rounded border px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div className="flex flex-col">
+            <label className="mb-1 text-xs text-gray-600">Status</label>
+            <select name="status" defaultValue={status} className="rounded border px-2 py-1.5 text-sm">
+              <option value="ALL">All</option>
+              <option value="OPEN">Open</option>
+              <option value="PAID">Paid</option>
+              <option value="OVERDUE">Overdue</option>
+            </select>
+          </div>
+          <div className="flex flex-col">
+            <label className="mb-1 text-xs text-gray-600">Sort</label>
+            <select name="sort" defaultValue={sort} className="rounded border px-2 py-1.5 text-sm">
+              <option value="due_date">Due date</option>
+              <option value="created_at">Created</option>
+              <option value="amount_cents">Amount</option>
+            </select>
+          </div>
+          <div className="flex flex-col">
+            <label className="mb-1 text-xs text-gray-600">Dir</label>
+            <select name="dir" defaultValue={dir} className="rounded border px-2 py-1.5 text-sm">
+              <option value="desc">Desc</option>
+              <option value="asc">Asc</option>
+            </select>
+          </div>
+          <button className="rounded border px-3 py-1.5 text-sm hover:bg-gray-50" type="submit">
+            Apply
+          </button>
+        </form>
       </div>
 
-      {/* Filters */}
-      <form className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
-        <input
-          name="q"
-          placeholder="Search invoice #"
-          defaultValue={q}
-          className="rounded-lg border px-3 py-2 text-sm"
-        />
-        <select name="status" defaultValue={status} className="rounded-lg border px-3 py-2 text-sm">
-          <option value="">Any status</option>
-          <option value="open">Open</option>
-          <option value="issued">Issued</option>
-          <option value="overdue">Overdue</option>
-          <option value="paid">Paid</option>
-        </select>
-        <select name="sort" defaultValue={sort} className="rounded-lg border px-3 py-2 text-sm">
-          <option value="due_desc">Due date (newest)</option>
-          <option value="due_asc">Due date (oldest)</option>
-          <option value="created_desc">Created (newest)</option>
-          <option value="created_asc">Created (oldest)</option>
-        </select>
-        <div>
-          <button className="w-full rounded-lg border px-3 py-2 text-sm hover:bg-gray-50">Apply</button>
-        </div>
-      </form>
-
-      <div className="overflow-x-auto">
-        <table className="min-w-full border text-sm">
-          <thead className="bg-gray-50">
+      <div className="overflow-x-auto rounded-lg border">
+        <table className="min-w-full text-sm">
+          <thead className="bg-gray-50 text-left text-xs font-semibold text-gray-600">
             <tr>
-              <th className="border px-2 py-1 text-left">Number</th>
-              <th className="border px-2 py-1 text-left">Due date</th>
-              <th className="border px-2 py-1 text-left">Amount</th>
-              <th className="border px-2 py-1 text-left">Status</th>
-              <th className="border px-2 py-1 text-left">Actions</th>
+              <th className="px-3 py-2">Invoice</th>
+              <th className="px-3 py-2">Amount</th>
+              <th className="px-3 py-2">Due</th>
+              <th className="px-3 py-2">Status</th>
+              <th className="px-3 py-2">Actions</th>
             </tr>
           </thead>
-          <tbody>
-            {rows.map((inv) => (
-              <tr key={inv.id}>
-                <td className="border px-2 py-1">{inv.number || "—"}</td>
-                <td className="border px-2 py-1">{inv.due_date || "—"}</td>
-                <td className="border px-2 py-1">{fmtAmt(inv.amount_cents, inv.currency)}</td>
-                <td className="border px-2 py-1">{inv.status || "—"}</td>
-                <td className="border px-2 py-1">
-                  <Link className="text-blue-600 underline" href={`/tenant/invoices/${inv.id}`}>
-                    View
-                  </Link>
-                </td>
-              </tr>
-            ))}
-            {!rows.length && (
+          <tbody className="divide-y">
+            {rows.length === 0 && (
               <tr>
-                <td className="border px-2 py-4 text-center" colSpan={5}>
+                <td colSpan={5} className="px-3 py-6 text-center text-gray-500">
                   No invoices found.
                 </td>
               </tr>
             )}
+            {rows.map((r) => (
+              <tr key={r.id} className="hover:bg-gray-50">
+                <td className="px-3 py-2">
+                  <div className="font-medium">{r.number}</div>
+                  <div className="text-xs text-gray-500">{r.description || "\u00A0"}</div>
+                </td>
+                <td className="px-3 py-2">{fmtAmt(r.amountCents, r.currency)}</td>
+                <td className="px-3 py-2">{r.dueDate ? new Date(r.dueDate).toLocaleDateString() : "—"}</td>
+                <td className="px-3 py-2">{badge(r.status)}</td>
+                <td className="px-3 py-2">
+                  <div className="flex gap-2">
+                    <Link
+                      href={`/tenant/invoices/${r.id}`}
+                      className="rounded border px-2 py-1"
+                      prefetch={false}
+                    >
+                      View
+                    </Link>
+                    <a
+                      className="rounded border px-2 py-1"
+                      href={`/api/tenant/invoices/${r.id}/pdf`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Download PDF
+                    </a>
+                  </div>
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
 
       {/* Pager */}
       <div className="mt-4 flex items-center justify-between">
-        <Link
-          href={keep(searchParams || {}, { page: String(Math.max(1, page - 1)) })}
-          className="rounded border px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50"
-          aria-disabled={!hasPrev}
-          onClick={(e) => { if (!hasPrev) e.preventDefault(); }}
-        >
-          ← Prev
-        </Link>
-        <span className="text-sm text-gray-600">Page {page}</span>
-        <Link
-          href={keep(searchParams || {}, { page: String(page + 1) })}
-          className="rounded border px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50"
-          aria-disabled={!hasNext}
-          onClick={(e) => { if (!hasNext) e.preventDefault(); }}
-        >
-          Next →
-        </Link>
+        <div className="text-xs text-gray-500">
+          Page {baseQP.page} of {totalPages} ({count} total)
+        </div>
+        <div className="flex gap-2">
+          <Link
+            className="rounded border px-3 py-1.5 text-sm disabled:opacity-50"
+            href={qparams(baseQP, { page: Math.max(1, Number(baseQP.page) - 1) })}
+            aria-disabled={Number(baseQP.page) <= 1}
+          >
+            ← Prev
+          </Link>
+          <Link
+            className="rounded border px-3 py-1.5 text-sm disabled:opacity-50"
+            href={qparams(baseQP, { page: Math.min(totalPages, Number(baseQP.page) + 1) })}
+            aria-disabled={Number(baseQP.page) >= totalPages}
+          >
+            Next →
+          </Link>
+        </div>
       </div>
     </div>
   );
