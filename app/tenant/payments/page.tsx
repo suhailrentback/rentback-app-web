@@ -15,7 +15,6 @@ type RawRow = {
   reference: string | null;
   created_at: string | null;
   confirmed_at: string | null;
-  // Supabase may return joined record as object or array depending on relationship
   invoice?: any;
 };
 
@@ -93,7 +92,10 @@ async function loadRows() {
 
   if (error) return [];
 
-  const rows: Row[] = (data as RawRow[]).map((r) => {
+  // 🔧 SAFE NARROW: TS sometimes widens to GenericStringError[] in strict mode.
+  const raw: RawRow[] = Array.isArray(data) ? ((data as unknown) as RawRow[]) : [];
+
+  const rows: Row[] = raw.map((r) => {
     const inv = Array.isArray(r.invoice) ? r.invoice[0] : r.invoice;
     return {
       id: r.id,
@@ -167,7 +169,6 @@ export default async function TenantPaymentsPage() {
                         View invoice
                       </Link>
                     ) : null}
-                    {/* Receipt link only when confirmed */}
                     {r.status.toLowerCase() === "confirmed" && r.invoiceId ? (
                       <a
                         href={`/api/tenant/invoices/${r.invoiceId}/receipt`}
