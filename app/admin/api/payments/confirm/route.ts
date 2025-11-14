@@ -1,4 +1,6 @@
 // app/admin/api/payments/confirm/route.ts
+export const runtime = "nodejs";
+
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
@@ -21,21 +23,18 @@ function getSb() {
   return sb;
 }
 
-// Require paymentId in body (FormData or JSON). No URL parsing to avoid TS libs issues.
 async function readPaymentId(req: Request) {
   const ct = req.headers.get("content-type") || "";
   if (ct.includes("application/json")) {
     const j = await req.json().catch(() => null);
     if (j && typeof j.paymentId === "string") return j.paymentId as string;
   }
-  // default: form data
   const fd = await req.formData().catch(() => null);
   const val = fd?.get("paymentId");
   if (typeof val === "string" && val) return val;
   return null;
 }
 
-// Minimal role guard (relies on middleware too)
 async function guardStaff() {
   const sb = getSb();
   const { data: auth } = await sb.auth.getUser();
@@ -51,7 +50,12 @@ async function guardStaff() {
   if (!profile || !["staff", "admin"].includes(String(profile.role || "").toLowerCase())) {
     return { ok: false as const, reason: "not_permitted" as const };
   }
-  return { ok: true as const, sb, uid, staffEmail: profile.email as string | null };
+  return { ok: true as const, sb, uid, staffEmail: (profile.email as string) || null };
+}
+
+function normalizeOne<T>(x: T | T[] | null | undefined): T | null {
+  if (Array.isArray(x)) return x[0] ?? null;
+  return (x ?? null) as T | null;
 }
 
 export async function POST(req: Request) {
@@ -64,22 +68,33 @@ export async function POST(req: Request) {
   const paymentId = await readPaymentId(req);
   if (!paymentId) return NextResponse.json({ error: "missing_payment_id" }, { status: 400 });
 
-  // Load payment + invoice (single)
+  // Load payment + related invoice (normalize relation shape)
   const { data: payment, error: loadErr } = await sb
     .from("payments")
     .select(
-      "id,amount_cents,currency,status,reference,created_at,confirmed_at,tenant_id,invoice:invoices(id,number,amount_cents,currency,due_date,tenant_id)"
+      [
+        "id",
+        "amount_cents",
+        "currency",
+        "status",
+        "reference",
+        "created_at",
+        "confirmed_at",
+        "tenant_id",
+        // be explicit about FK; still normalize for safety
+        "invoice:invoices!payments_invoice_id_fkey(id,number,amount_cents,currency,due_date,tenant_id)",
+      ].join(",")
     )
     .eq("id", paymentId)
     .maybeSingle();
 
   if (loadErr) return NextResponse.json({ error: "load_payment_failed", detail: loadErr.message }, { status: 500 });
   if (!payment) return NextResponse.json({ error: "payment_not_found" }, { status: 404 });
-  if (!payment.invoice || !payment.invoice.id) {
+
+  const invoice = normalizeOne(payment.invoice as any);
+  if (!invoice || !invoice.id) {
     return NextResponse.json({ error: "invoice_not_found" }, { status: 400 });
   }
-
-  const invoice = payment.invoice;
 
   // Mark payment confirmed
   const nowIso = new Date().toISOString();
@@ -92,38 +107,43 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "update_payment_failed", detail: updPayErr.message }, { status: 500 });
   }
 
-  // Mark invoice paid (if not already)
+  // Mark invoice paid
   await sb.from("invoices").update({ status: "PAID" }).eq("id", invoice.id);
 
-  // Lookup tenant email
-  const { data: tenantProfile } = await sb
-    .from("profiles")
-    .select("email")
-    .eq("user_id", payment.tenant_id)
-    .maybeSingle();
+  // Lookup tenant email (prefer payment.tenant_id, otherwise invoice.tenant_id)
+  const tenantId = (payment.tenant_id as string) || (invoice.tenant_id as string) || null;
+  let tenantEmail: string | null = null;
+  if (tenantId) {
+    const { data: tenantProfile } = await sb
+      .from("profiles")
+      .select("email")
+      .eq("user_id", tenantId)
+      .maybeSingle();
+    tenantEmail = (tenantProfile?.email as string) || null;
+  }
 
-  // Build receipt PDF (Buffer)
+  // Build receipt PDF buffer
   const pdfBuf = await buildReceiptPDFBuffer(
     {
-      id: invoice.id,
+      id: invoice.id as string,
       number: String(invoice.number),
-      amount_cents: Number(invoice.amount_cents || payment.amount_cents || 0),
-      currency: String(invoice.currency || payment.currency || "PKR"),
-      due_date: invoice.due_date || null,
+      amount_cents: Number(invoice.amount_cents ?? payment.amount_cents ?? 0),
+      currency: String(invoice.currency ?? payment.currency ?? "PKR"),
+      due_date: (invoice.due_date as string) || null,
     },
     {
-      id: payment.id,
-      amount_cents: Number(payment.amount_cents || 0),
-      currency: String(payment.currency || invoice.currency || "PKR"),
-      reference: payment.reference || null,
-      created_at: payment.created_at || null,
+      id: payment.id as string,
+      amount_cents: Number(payment.amount_cents ?? 0),
+      currency: String(payment.currency ?? invoice.currency ?? "PKR"),
+      reference: (payment.reference as string) || null,
+      created_at: (payment.created_at as string) || null,
       confirmed_at: nowIso,
     },
-    tenantProfile?.email || null
+    tenantEmail
   );
 
-  // Optional email send (no-op if no key)
-  if (tenantProfile?.email) {
+  // Optional email (no-op if key missing)
+  if (tenantEmail) {
     const html = `
       <p>Hi,</p>
       <p>Your payment has been confirmed for invoice <strong>${invoice.number}</strong>.</p>
@@ -131,7 +151,7 @@ export async function POST(req: Request) {
       <p>— RentBack</p>
     `;
     await sendEmailResend({
-      to: tenantProfile.email,
+      to: tenantEmail,
       subject: `Receipt for ${invoice.number}`,
       html,
       attachments: [
@@ -144,7 +164,6 @@ export async function POST(req: Request) {
     });
   }
 
-  // Redirect back to Admin Payments with a toast param
-  const url = `${URL_APP}/admin/payments?confirmed=1`;
-  return NextResponse.redirect(url, { status: 303 });
+  // Redirect back to Admin Payments
+  return NextResponse.redirect(`${URL_APP}/admin/payments?confirmed=1`, { status: 303 });
 }
