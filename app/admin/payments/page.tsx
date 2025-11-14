@@ -1,264 +1,216 @@
 // app/admin/payments/page.tsx
-// Server Component: Admin Payments list with per-row Confirm button.
-// No client hooks, no server actions exported (uses API route).
-
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
+import Link from "next/link";
+import { redirect } from "next/navigation";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-type SearchParams = Record<string, string | string[] | undefined>;
-
-type Row = {
+type Payment = {
   id: string;
+  invoice_id: string | null;
+  tenant_id: string | null;
   amount_cents: number;
   currency: string;
   status: string;
-  reference: string;
+  reference: string | null;
   created_at: string;
   confirmed_at: string | null;
-  invoice: { id: string; number: string; due_date: string } | null;
 };
 
-function getSb() {
-  const jar = cookies();
-  return createServerClient(SUPABASE_URL, SUPABASE_ANON, {
-    cookies: { get: (name: string) => jar.get(name)?.value },
-  });
+type Invoice = {
+  id: string;
+  number: string | null;
+  due_date: string | null;
+};
+
+function formatMoney(cents: number, currency: string) {
+  const amt = (Number(cents || 0) / 100).toFixed(2);
+  return `${amt} ${currency}`;
 }
 
-async function requireStaffOrAdmin() {
-  const sb = getSb();
-  const { data: auth } = await sb.auth.getUser();
-  const uid = auth?.user?.id;
-  if (!uid) return { ok: false as const, status: 401 as const };
-
-  const { data: me } = await sb.from("profiles").select("role").eq("user_id", uid).maybeSingle();
-  if (!me || !["staff", "admin"].includes(String(me.role))) {
-    return { ok: false as const, status: 403 as const };
+function buildCsvHref(searchParams: Record<string, string | string[] | undefined>) {
+  const usp = new URLSearchParams();
+  for (const [k, v] of Object.entries(searchParams)) {
+    if (typeof v === "string") usp.set(k, v);
+    if (Array.isArray(v)) v.forEach((x) => usp.append(k, x));
   }
-  return { ok: true as const, sb };
-}
-
-function fmtAmount(cents: number, currency: string) {
-  const amount = (Number(cents || 0) / 100).toFixed(2);
-  return `${amount} ${currency}`;
-}
-
-function fmtDate(iso?: string | null) {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? String(iso) : d.toISOString().slice(0, 10);
-}
-
-function normalizeRows(data: any[]): Row[] {
-  return (Array.isArray(data) ? data : []).map((r: any) => {
-    const invRaw = Array.isArray(r.invoice) ? r.invoice[0] : r.invoice;
-    const invoice =
-      invRaw && invRaw.id
-        ? {
-            id: String(invRaw.id),
-            number: String(invRaw.number ?? ""),
-            due_date: String(invRaw.due_date ?? ""),
-          }
-        : null;
-    return {
-      id: String(r.id),
-      amount_cents: Number(r.amount_cents ?? 0),
-      currency: String(r.currency ?? ""),
-      status: String(r.status ?? ""),
-      reference: String(r.reference ?? ""),
-      created_at: String(r.created_at ?? ""),
-      confirmed_at: r.confirmed_at ? String(r.confirmed_at) : null,
-      invoice,
-    };
-  });
-}
-
-async function fetchRows(sb: ReturnType<typeof getSb>, params: SearchParams) {
-  const status = (params.status as string) || "";
-  const currency = (params.currency as string) || "";
-  const q = (params.q as string) || "";
-  const from = (params.from as string) || "";
-  const to = (params.to as string) || "";
-
-  let query = sb
-    .from("payments")
-    .select(
-      "id, amount_cents, currency, status, reference, created_at, confirmed_at, invoice:invoices(id, number, due_date)"
-    )
-    .order("created_at", { ascending: false })
-    .limit(200);
-
-  if (status) query = query.eq("status", status);
-  if (currency) query = query.eq("currency", currency);
-  if (q) query = query.ilike("reference", `%${q}%`);
-  if (from) query = query.gte("created_at", `${from}T00:00:00Z`);
-  if (to) query = query.lte("created_at", `${to}T23:59:59Z`);
-
-  const { data, error } = await query;
-  if (error) throw new Error(error.message);
-  return normalizeRows(data || []);
-}
-
-function buildExportHref(params: SearchParams) {
-  const qs = new URLSearchParams();
-  for (const [k, v] of Object.entries(params || {})) {
-    if (typeof v === "string" && v) qs.set(k, v);
-  }
-  const qstr = qs.toString();
-  return qstr ? `/admin/api/payments/export?${qstr}` : `/admin/api/payments/export`;
+  return `/admin/api/payments/export?${usp.toString()}`;
 }
 
 export default async function AdminPaymentsPage({
   searchParams,
 }: {
-  searchParams?: SearchParams;
+  searchParams?: Record<string, string | string[] | undefined>;
 }) {
-  const guard = await requireStaffOrAdmin();
-  if (!guard.ok) {
-    const msg = guard.status === 401 ? "Unauthorized" : "Forbidden";
+  const jar = cookies();
+  const sb = createServerClient(SUPABASE_URL, SUPABASE_ANON, {
+    cookies: { get: (name: string) => jar.get(name)?.value },
+  });
+
+  // Guard: staff/admin only
+  const { data: auth } = await sb.auth.getUser();
+  const uid = auth?.user?.id;
+  if (!uid) redirect("/not-permitted");
+
+  const { data: me } = await sb.from("profiles").select("role").eq("user_id", uid).maybeSingle();
+  if (!me || !["staff", "admin"].includes(String(me.role))) {
+    redirect("/not-permitted");
+  }
+
+  // Filters
+  const q = (searchParams?.q as string) || "";
+  const status = (searchParams?.status as string) || "";
+  const currency = (searchParams?.currency as string) || "";
+  const from = (searchParams?.from as string) || "";
+  const to = (searchParams?.to as string) || "";
+
+  let query = sb
+    .from("payments")
+    .select(
+      "id, invoice_id, tenant_id, amount_cents, currency, status, reference, created_at, confirmed_at"
+    )
+    .order("created_at", { ascending: false });
+
+  if (status) query = query.eq("status", status);
+  if (currency) query = query.eq("currency", currency);
+  if (from) query = query.gte("created_at", from);
+  if (to) query = query.lte("created_at", to);
+  if (q) {
+    // basic ilike across reference (and later, tenant email via a view)
+    query = query.ilike("reference", `%${q}%`);
+  }
+
+  const { data: payments, error } = await query.limit(200);
+  if (error) {
     return (
-      <div className="mx-auto w-full max-w-5xl p-6">
+      <div className="mx-auto max-w-5xl p-6">
         <h1 className="text-xl font-semibold">Admin · Payments</h1>
-        <p className="mt-2 text-sm text-red-600">{msg}</p>
+        <p className="mt-4 rounded-md bg-red-50 p-3 text-sm text-red-700">
+          Failed to load payments: {error.message}
+        </p>
       </div>
     );
   }
-  const { sb } = guard;
 
-  // Load rows
-  const rows = await fetchRows(sb, searchParams || {});
-  const exportHref = buildExportHref(searchParams || {});
+  // Fetch related invoices in a second query to avoid brittle join typing
+  const invoiceIds = Array.from(
+    new Set((payments || []).map((p) => p.invoice_id).filter(Boolean) as string[])
+  );
+  let invoiceById = new Map<string, Invoice>();
+  if (invoiceIds.length) {
+    const { data: invoices } = await sb
+      .from("invoices")
+      .select("id, number, due_date")
+      .in("id", invoiceIds);
+    (invoices || []).forEach((inv) => invoiceById.set(inv.id, inv));
+  }
+
+  const csvHref = buildCsvHref(searchParams || {});
 
   return (
-    <div className="mx-auto w-full max-w-5xl p-6">
-      <div className="mb-4 flex items-center justify-between gap-3">
+    <div className="mx-auto w-full max-w-5xl p-4 md:p-6">
+      <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Admin · Payments</h1>
-        <a
-          href={exportHref}
-          className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
-        >
-          Export CSV
-        </a>
+        <div className="flex gap-2">
+          <Link
+            href="/admin"
+            className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
+          >
+            ← Admin home
+          </Link>
+          <a
+            href={csvHref}
+            className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
+          >
+            Export CSV
+          </a>
+        </div>
       </div>
 
-      {/* Simple filters (non-interactive placeholders for now; they won’t break) */}
-      <form method="GET" className="mb-4 grid grid-cols-1 gap-2 md:grid-cols-5">
+      {/* Filters */}
+      <form className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
         <input
           name="q"
           placeholder="Search reference…"
-          defaultValue={(searchParams?.q as string) || ""}
-          className="rounded-xl border px-3 py-2 text-sm"
+          defaultValue={q}
+          className="rounded-lg border px-3 py-2 text-sm"
         />
+        <select name="status" defaultValue={status} className="rounded-lg border px-3 py-2 text-sm">
+          <option value="">Any status</option>
+          <option value="pending">Pending</option>
+          <option value="confirmed">Confirmed</option>
+          <option value="failed">Failed</option>
+        </select>
         <select
-          name="status"
-          defaultValue={(searchParams?.status as string) || ""}
-          className="rounded-xl border px-3 py-2 text-sm"
+          name="currency"
+          defaultValue={currency}
+          className="rounded-lg border px-3 py-2 text-sm"
         >
-          <option value="">All statuses</option>
-          <option value="pending">pending</option>
-          <option value="confirmed">confirmed</option>
-          <option value="failed">failed</option>
+          <option value="">Any currency</option>
+          <option value="PKR">PKR</option>
+          <option value="USD">USD</option>
+          <option value="EUR">EUR</option>
         </select>
         <input
-          type="date"
+          type="datetime-local"
           name="from"
-          defaultValue={(searchParams?.from as string) || ""}
-          className="rounded-xl border px-3 py-2 text-sm"
+          defaultValue={from}
+          className="rounded-lg border px-3 py-2 text-sm"
         />
         <input
-          type="date"
+          type="datetime-local"
           name="to"
-          defaultValue={(searchParams?.to as string) || ""}
-          className="rounded-xl border px-3 py-2 text-sm"
+          defaultValue={to}
+          className="rounded-lg border px-3 py-2 text-sm"
         />
-        <button className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50">
-          Apply
-        </button>
+        <div className="lg:col-span-5">
+          <button className="rounded-lg border px-3 py-2 text-sm hover:bg-gray-50">Apply</button>
+        </div>
       </form>
 
-      <div className="overflow-x-auto rounded-2xl border">
-        <table className="w-full text-left text-sm">
+      {/* Table */}
+      <div className="mt-6 overflow-x-auto">
+        <table className="min-w-full border text-sm">
           <thead className="bg-gray-50">
             <tr>
-              <th className="px-3 py-2">Payment</th>
-              <th className="px-3 py-2">Invoice</th>
-              <th className="px-3 py-2">Amount</th>
-              <th className="px-3 py-2">Status</th>
-              <th className="px-3 py-2">Created</th>
-              <th className="px-3 py-2">Confirmed</th>
-              <th className="px-3 py-2">Action</th>
+              <th className="border px-2 py-1 text-left">Created</th>
+              <th className="border px-2 py-1 text-left">Invoice</th>
+              <th className="border px-2 py-1 text-left">Reference</th>
+              <th className="border px-2 py-1 text-left">Amount</th>
+              <th className="border px-2 py-1 text-left">Status</th>
+              <th className="border px-2 py-1 text-left">Confirmed</th>
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 ? (
+            {(payments || []).map((p) => {
+              const inv = p.invoice_id ? invoiceById.get(p.invoice_id) : null;
+              return (
+                <tr key={p.id}>
+                  <td className="border px-2 py-1">{new Date(p.created_at).toLocaleString()}</td>
+                  <td className="border px-2 py-1">
+                    {inv?.number || "—"} {inv?.id ? (
+                      <Link className="text-blue-600 underline" href={`/tenant/invoices/${inv.id}`}>
+                        View
+                      </Link>
+                    ) : null}
+                  </td>
+                  <td className="border px-2 py-1">{p.reference || "—"}</td>
+                  <td className="border px-2 py-1">{formatMoney(p.amount_cents, p.currency)}</td>
+                  <td className="border px-2 py-1">{p.status}</td>
+                  <td className="border px-2 py-1">
+                    {p.confirmed_at ? new Date(p.confirmed_at).toLocaleString() : "—"}
+                  </td>
+                </tr>
+              );
+            })}
+            {!payments?.length && (
               <tr>
-                <td colSpan={7} className="px-3 py-6 text-center text-gray-500">
+                <td className="border px-2 py-4 text-center" colSpan={6}>
                   No payments found.
                 </td>
               </tr>
-            ) : (
-              rows.map((r) => (
-                <tr key={r.id} className="border-t">
-                  <td className="px-3 py-2">
-                    <div className="font-medium">{r.reference || r.id.slice(0, 8)}</div>
-                    <div className="text-xs text-gray-500">{r.id}</div>
-                  </td>
-                  <td className="px-3 py-2">
-                    {r.invoice ? (
-                      <>
-                        <div className="font-medium">{r.invoice.number}</div>
-                        <div className="text-xs text-gray-500">
-                          Due {fmtDate(r.invoice.due_date)}
-                        </div>
-                      </>
-                    ) : (
-                      <span className="text-xs text-gray-500">—</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2">{fmtAmount(r.amount_cents, r.currency)}</td>
-                  <td className="px-3 py-2">
-                    <span
-                      className={
-                        "rounded-lg px-2 py-0.5 text-xs " +
-                        (r.status === "confirmed"
-                          ? "bg-green-50 text-green-700"
-                          : r.status === "failed"
-                          ? "bg-rose-50 text-rose-700"
-                          : "bg-amber-50 text-amber-700")
-                      }
-                    >
-                      {r.status}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2">{fmtDate(r.created_at)}</td>
-                  <td className="px-3 py-2">{fmtDate(r.confirmed_at)}</td>
-                  <td className="px-3 py-2">
-                    {r.status === "confirmed" ? (
-                      <button
-                        disabled
-                        className="rounded-xl border px-3 py-1.5 text-sm opacity-60"
-                        title="Already confirmed"
-                      >
-                        Confirmed
-                      </button>
-                    ) : (
-                      <form
-                        method="POST"
-                        action="/admin/api/payments/confirm"
-                        className="inline"
-                      >
-                        <input type="hidden" name="paymentId" value={r.id} />
-                        <button className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50">
-                          Confirm
-                        </button>
-                      </form>
-                    )}
-                  </td>
-                </tr>
-              ))
             )}
           </tbody>
         </table>
