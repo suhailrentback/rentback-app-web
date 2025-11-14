@@ -1,231 +1,135 @@
 // app/admin/api/payments/confirm/route.ts
-// Confirms a payment, updates invoice->paid, inserts receipt, and emails tenant.
-// Node runtime to allow pdfkit & Buffer usage.
-
-export const runtime = "nodejs";
-
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
-import PDFDocument from "pdfkit";
-import { sendEmail } from "@/lib/mailer";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const SITE_URL = process.env.SITE_URL || "https://www.rentback.app";
+const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
+const EMAIL_FROM = process.env.EMAIL_FROM || "no-reply@rentback.app";
 
-function getSb() {
-  const jar = cookies();
-  return createServerClient(SUPABASE_URL, SUPABASE_ANON, {
-    cookies: { get: (name: string) => jar.get(name)?.value },
-  });
+function getPaymentIdFrom(req: Request): string | null {
+  const ct = req.headers.get("content-type") || "";
+  // NOTE: We don't parse here to avoid consuming the body twice; callers must ensure body is FormData for POST forms.
+  // Fallback to querystring:
+  const u = new globalThis.URL(req.url);
+  const qp = u.searchParams.get("paymentId") || u.searchParams.get("id");
+  return qp || null;
 }
 
-async function requireStaffOrAdmin() {
-  const sb = getSb();
+async function requireStaff() {
+  const jar = cookies();
+  const sb = createServerClient(SUPABASE_URL, SUPABASE_ANON, {
+    cookies: { get: (name: string) => jar.get(name)?.value },
+  });
   const { data: auth } = await sb.auth.getUser();
   const uid = auth?.user?.id;
-  if (!uid) return { ok: false as const, status: 401 as const, sb };
-
-  const { data: me } = await sb.from("profiles").select("role").eq("user_id", uid).maybeSingle();
-  if (!me || !["staff", "admin"].includes(String(me.role))) {
-    return { ok: false as const, status: 403 as const, sb };
-  }
+  if (!uid) return { ok: false as const };
+  const { data: prof } = await sb.from("profiles").select("role").eq("user_id", uid).maybeSingle();
+  if (!prof || !["staff", "admin"].includes((prof as any).role)) return { ok: false as const };
   return { ok: true as const, sb, uid };
 }
 
-async function getFormOrJsonId(req: Request): Promise<string | null> {
-  const ct = req.headers.get("content-type") || "";
-  if (ct.includes("application/x-www-form-urlencoded") || ct.includes("multipart/form-data")) {
-    const form = await req.formData();
-    const id = form.get("paymentId");
-    return typeof id === "string" && id ? id : null;
-  }
-  if (ct.includes("application/json")) {
-    const j = await req.json().catch(() => null);
-    const id = j?.paymentId || j?.id;
-    return typeof id === "string" && id ? id : null;
-  }
-  // also allow query param as a fallback
-  const url = new URL(req.url);
-  const qp = url.searchParams.get("paymentId") || url.searchParams.get("id");
-  return typeof qp === "string" && qp ? qp : null;
-}
-
-function first<T = any>(v: T | T[] | null | undefined): T | null {
-  if (Array.isArray(v)) return (v[0] ?? null) as T | null;
-  return (v ?? null) as T | null;
-}
-
-function formatMoney(amountCents: number, currency: string) {
-  const amt = (Number(amountCents || 0) / 100).toFixed(2);
-  return `${amt} ${currency}`;
-}
-
-async function buildReceiptPdf(opts: {
-  tenantName: string;
-  tenantEmail: string;
-  invoiceNumber: string;
-  paymentRef: string;
-  amountCents: number;
-  currency: string;
-  paidAtISO: string;
-}) {
-  return new Promise<Buffer>((resolve, reject) => {
-    const doc = new PDFDocument({ size: "A4", margin: 48 });
-    const chunks: Buffer[] = [];
-    doc.on("data", (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
-    doc.on("error", reject);
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-
-    doc.fontSize(18).text("RentBack — Payment Receipt", { align: "left" });
-    doc.moveDown(0.5);
-    doc.fontSize(10).fillColor("#555").text(`Issued: ${new Date().toISOString().slice(0, 10)}`);
-    doc.moveDown();
-
-    doc.fillColor("#000").fontSize(12).text(`Billed To: ${opts.tenantName || opts.tenantEmail}`);
-    doc.text(`Email: ${opts.tenantEmail}`);
-    doc.moveDown();
-
-    doc.text(`Invoice: ${opts.invoiceNumber}`);
-    doc.text(`Payment Reference: ${opts.paymentRef}`);
-    doc.text(`Paid At: ${opts.paidAtISO}`);
-    doc.text(`Amount: ${formatMoney(opts.amountCents, opts.currency)}`);
-    doc.moveDown();
-
-    doc.fontSize(10).fillColor("#666").text("Thank you for your payment.");
-    doc.end();
-  });
-}
-
 export async function POST(req: Request) {
-  const guard = await requireStaffOrAdmin();
+  const guard = await requireStaff();
   if (!guard.ok) {
-    return NextResponse.json(
-      { error: guard.status === 401 ? "unauthorized" : "forbidden" },
-      { status: guard.status }
-    );
+    return NextResponse.json({ error: "not_permitted" }, { status: 403 });
   }
   const { sb } = guard;
 
-  const paymentId = await getFormOrJsonId(req);
-  if (!paymentId) {
-    return NextResponse.json({ error: "invalid_payload" }, { status: 400 });
-  }
+  // Collect paymentId from form or query
+  let paymentId = getPaymentIdFrom(req);
 
-  // 1) Load payment + invoice (joined). Supabase may shape the join as an array.
-  const { data: payment, error: payErr } = await sb
+  if (!paymentId) {
+    const ct = req.headers.get("content-type") || "";
+    if (ct.includes("application/x-www-form-urlencoded") || ct.includes("multipart/form-data")) {
+      const form = await req.formData();
+      paymentId = String(form.get("paymentId") || "");
+    } else if (ct.includes("application/json")) {
+      const body = (await req.json().catch(() => null)) as any;
+      paymentId = body?.paymentId || "";
+    }
+  }
+  if (!paymentId) return NextResponse.json({ error: "invalid_payload" }, { status: 400 });
+
+  // Load payment + invoice + tenant
+  const { data: pay, error: payErr } = await sb
     .from("payments")
-    .select(
-      "id, amount_cents, currency, status, reference, created_at, invoice_id, confirmed_at, invoice:invoices(id, number, tenant_id)"
-    )
+    .select("id, status, amount_cents, currency, reference, invoice_id, tenant_id, invoice:invoices(id,number), tenant:profiles(email)")
     .eq("id", paymentId)
     .maybeSingle();
 
-  if (payErr) {
-    return NextResponse.json({ error: "load_payment_failed", detail: payErr.message }, { status: 500 });
-  }
-  if (!payment) {
-    return NextResponse.json({ error: "payment_not_found" }, { status: 404 });
-  }
+  if (payErr) return NextResponse.json({ error: "load_payment_failed", detail: payErr.message }, { status: 500 });
+  if (!pay) return NextResponse.json({ error: "payment_not_found" }, { status: 404 });
 
-  const invoiceJoined = first<any>(payment.invoice);
-  if (!invoiceJoined || !invoiceJoined.id) {
+  const invoice = Array.isArray(pay.invoice) ? pay.invoice[0] : pay.invoice;
+  const tenant = Array.isArray(pay.tenant) ? pay.tenant[0] : pay.tenant;
+
+  if (!invoice?.id) {
     return NextResponse.json({ error: "invoice_not_found" }, { status: 400 });
   }
 
-  const invoiceId: string = String(invoiceJoined.id);
-  const nowIso = new Date().toISOString();
-
-  // 2) Confirm payment (idempotent-ish) and mark invoice paid
-  if (payment.status !== "confirmed") {
-    const { error: upPayErr } = await sb
-      .from("payments")
-      .update({ status: "confirmed", confirmed_at: nowIso })
-      .eq("id", payment.id);
-    if (upPayErr) {
-      return NextResponse.json({ error: "update_payment_failed", detail: upPayErr.message }, { status: 500 });
-    }
+  // If already confirmed, no-op redirect
+  if (String(pay.status).toLowerCase() === "confirmed") {
+    return NextResponse.redirect(`${SITE_URL}/admin/payments`, 303);
   }
 
-  const { error: upInvErr } = await sb.from("invoices").update({ status: "paid" }).eq("id", invoiceId);
-  if (upInvErr) {
-    return NextResponse.json({ error: "update_invoice_failed", detail: upInvErr.message }, { status: 500 });
-  }
+  // Update payment -> confirmed
+  const { error: upPayErr } = await sb
+    .from("payments")
+    .update({ status: "confirmed", confirmed_at: new Date().toISOString() })
+    .eq("id", paymentId);
+  if (upPayErr) return NextResponse.json({ error: "update_payment_failed", detail: upPayErr.message }, { status: 500 });
 
-  // 3) Insert receipt (ignore duplicate)
-  const { error: rcptErr } = await sb.from("receipts").insert({
-    payment_id: payment.id,
-    invoice_id: invoiceId,
-    amount_cents: payment.amount_cents,
-    currency: payment.currency,
-    issued_at: nowIso,
+  // Update invoice -> paid (if you keep "open/paid")
+  await sb.from("invoices").update({ status: "paid" }).eq("id", invoice.id);
+
+  // Create receipt row (idempotent-ish: ignore conflict by uniqueness if you add one later)
+  await sb.from("receipts").insert({
+    invoice_id: invoice.id,
+    payment_id: paymentId,
+    issued_at: new Date().toISOString(),
   });
-  if (rcptErr && rcptErr.code !== "23505") {
-    return NextResponse.json({ error: "insert_receipt_failed", detail: rcptErr.message }, { status: 500 });
-  }
 
-  // 4) Email tenant (no-op if RESEND_API_KEY not set)
-  let tenantEmail = "";
-  let tenantName = "";
-  if (invoiceJoined.tenant_id) {
-    const { data: tenantProf } = await sb
-      .from("profiles")
-      .select("email, full_name")
-      .eq("user_id", invoiceJoined.tenant_id)
-      .maybeSingle();
-    tenantEmail = tenantProf?.email || "";
-    tenantName = tenantProf?.full_name || "";
-  }
+  // Email (optional)
+  if (RESEND_API_KEY && tenant?.email) {
+    const h = headers();
+    const host = h.get("x-forwarded-host") || h.get("host") || "www.rentback.app";
+    const proto = h.get("x-forwarded-proto") || "https";
+    const origin = SITE_URL || `${proto}://${host}`;
+    const receiptLink = `${origin}/api/tenant/invoices/${invoice.id}/receipt`;
 
-  const baseUrl = process.env.SITE_URL || "https://www.rentback.app";
-  const invoiceLink = `${baseUrl}/tenant/invoices/${invoiceId}`;
-  const receiptLink = `${baseUrl}/api/tenant/invoices/${invoiceId}/receipt`;
-
-  if (tenantEmail) {
-    const subject = `Receipt: ${String(invoiceJoined.number || "")} — ${formatMoney(payment.amount_cents, payment.currency)}`;
+    // Simple HTML email with link (attachment can be added later)
     const html = `
-      <p>Hi ${tenantName || "there"},</p>
-      <p>Your payment <strong>${formatMoney(payment.amount_cents, payment.currency)}</strong> for invoice <strong>${String(
-        invoiceJoined.number || ""
-      )}</strong> has been confirmed.</p>
-      <p>You can view your documents here:</p>
-      <ul>
-        <li>Invoice: <a href="${invoiceLink}">${invoiceLink}</a></li>
-        <li>Receipt (PDF): <a href="${receiptLink}">${receiptLink}</a></li>
-      </ul>
-      <p>Thank you,<br/>RentBack</p>
+      <div>
+        <p>Hi,</p>
+        <p>Your payment has been <strong>confirmed</strong>.</p>
+        <p><strong>Invoice:</strong> ${invoice.number || invoice.id}<br/>
+           <strong>Amount:</strong> ${(Number(pay.amount_cents || 0) / 100).toFixed(2)} ${pay.currency || ""}<br/>
+           <strong>Reference:</strong> ${pay.reference || "-"}
+        </p>
+        <p>You can download your receipt here:<br/>
+          <a href="${receiptLink}">${receiptLink}</a>
+        </p>
+        <p>— RentBack</p>
+      </div>
     `.trim();
 
-    // Optional PDF attachment; if it fails, send without attachment
-    let attachments: { filename: string; content: string }[] | undefined = undefined;
-    try {
-      const pdfBuf = await buildReceiptPdf({
-        tenantName,
-        tenantEmail,
-        invoiceNumber: String(invoiceJoined.number || ""),
-        paymentRef: String(payment.reference || payment.id),
-        amountCents: Number(payment.amount_cents || 0),
-        currency: String(payment.currency || ""),
-        paidAtISO: nowIso,
-      });
-      attachments = [
-        {
-          filename: `receipt-${String(invoiceJoined.number || invoiceId)}.pdf`,
-          content: pdfBuf.toString("base64"),
-        },
-      ];
-    } catch {
-      // swallow
-    }
-
-    await sendEmail({
-      to: tenantEmail,
-      subject,
-      html,
-      attachments,
-    });
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: EMAIL_FROM,
+        to: [tenant.email],
+        subject: `Receipt for ${invoice.number || invoice.id}`,
+        html,
+      }),
+    }).catch(() => null);
   }
 
-  // 5) Redirect back to Admin /payments (PRG pattern)
-  return NextResponse.redirect(new URL("/admin/payments", baseUrl), 303);
+  return NextResponse.redirect(`${SITE_URL}/admin/payments`, 303);
 }
