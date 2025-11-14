@@ -53,7 +53,6 @@ export default async function AdminPaymentsPage({
   const { data: auth } = await sb.auth.getUser();
   const uid = auth?.user?.id;
   if (!uid) redirect("/not-permitted");
-
   const { data: me } = await sb.from("profiles").select("role").eq("user_id", uid).maybeSingle();
   if (!me || !["staff", "admin"].includes(String(me.role))) {
     redirect("/not-permitted");
@@ -77,10 +76,7 @@ export default async function AdminPaymentsPage({
   if (currency) query = query.eq("currency", currency);
   if (from) query = query.gte("created_at", from);
   if (to) query = query.lte("created_at", to);
-  if (q) {
-    // basic ilike across reference (and later, tenant email via a view)
-    query = query.ilike("reference", `%${q}%`);
-  }
+  if (q) query = query.ilike("reference", `%${q}%`);
 
   const { data: payments, error } = await query.limit(200);
   if (error) {
@@ -94,7 +90,7 @@ export default async function AdminPaymentsPage({
     );
   }
 
-  // Fetch related invoices in a second query to avoid brittle join typing
+  // Related invoices
   const invoiceIds = Array.from(
     new Set((payments || []).map((p) => p.invoice_id).filter(Boolean) as string[])
   );
@@ -114,16 +110,10 @@ export default async function AdminPaymentsPage({
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Admin · Payments</h1>
         <div className="flex gap-2">
-          <Link
-            href="/admin"
-            className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
-          >
+          <Link href="/admin" className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50">
             ← Admin home
           </Link>
-          <a
-            href={csvHref}
-            className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
-          >
+          <a href={csvHref} className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50">
             Export CSV
           </a>
         </div>
@@ -143,28 +133,14 @@ export default async function AdminPaymentsPage({
           <option value="confirmed">Confirmed</option>
           <option value="failed">Failed</option>
         </select>
-        <select
-          name="currency"
-          defaultValue={currency}
-          className="rounded-lg border px-3 py-2 text-sm"
-        >
+        <select name="currency" defaultValue={currency} className="rounded-lg border px-3 py-2 text-sm">
           <option value="">Any currency</option>
           <option value="PKR">PKR</option>
           <option value="USD">USD</option>
           <option value="EUR">EUR</option>
         </select>
-        <input
-          type="datetime-local"
-          name="from"
-          defaultValue={from}
-          className="rounded-lg border px-3 py-2 text-sm"
-        />
-        <input
-          type="datetime-local"
-          name="to"
-          defaultValue={to}
-          className="rounded-lg border px-3 py-2 text-sm"
-        />
+        <input type="datetime-local" name="from" defaultValue={from} className="rounded-lg border px-3 py-2 text-sm" />
+        <input type="datetime-local" name="to" defaultValue={to} className="rounded-lg border px-3 py-2 text-sm" />
         <div className="lg:col-span-5">
           <button className="rounded-lg border px-3 py-2 text-sm hover:bg-gray-50">Apply</button>
         </div>
@@ -181,16 +157,19 @@ export default async function AdminPaymentsPage({
               <th className="border px-2 py-1 text-left">Amount</th>
               <th className="border px-2 py-1 text-left">Status</th>
               <th className="border px-2 py-1 text-left">Confirmed</th>
+              <th className="border px-2 py-1 text-left">Actions</th>
             </tr>
           </thead>
           <tbody>
             {(payments || []).map((p) => {
               const inv = p.invoice_id ? invoiceById.get(p.invoice_id) : null;
+              const canConfirm = p.status !== "confirmed";
               return (
                 <tr key={p.id}>
                   <td className="border px-2 py-1">{new Date(p.created_at).toLocaleString()}</td>
                   <td className="border px-2 py-1">
-                    {inv?.number || "—"} {inv?.id ? (
+                    {inv?.number || "—"}{" "}
+                    {inv?.id ? (
                       <Link className="text-blue-600 underline" href={`/tenant/invoices/${inv.id}`}>
                         View
                       </Link>
@@ -202,12 +181,24 @@ export default async function AdminPaymentsPage({
                   <td className="border px-2 py-1">
                     {p.confirmed_at ? new Date(p.confirmed_at).toLocaleString() : "—"}
                   </td>
+                  <td className="border px-2 py-1">
+                    <form action="/admin/api/payments/confirm" method="post" className="inline">
+                      <input type="hidden" name="paymentId" value={p.id} />
+                      <button
+                        className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50"
+                        disabled={!canConfirm}
+                        title={canConfirm ? "Confirm payment" : "Already confirmed"}
+                      >
+                        Confirm
+                      </button>
+                    </form>
+                  </td>
                 </tr>
               );
             })}
             {!payments?.length && (
               <tr>
-                <td className="border px-2 py-4 text-center" colSpan={6}>
+                <td className="border px-2 py-4 text-center" colSpan={7}>
                   No payments found.
                 </td>
               </tr>
