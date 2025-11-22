@@ -3,91 +3,54 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-const URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-const ALLOWED_STATUS = new Set([
-  "draft","issued","open","paid","overdue","void",
-]);
-
-export async function POST(
-  req: Request,
-  ctx: { params: { id: string } }
-) {
-  const id = ctx.params.id;
-  if (!id) return NextResponse.json({ error: "missing_id" }, { status: 400 });
-
-  const body = await req.json().catch(() => null);
-  if (!body || typeof body !== "object") {
-    return NextResponse.json({ error: "invalid_payload" }, { status: 400 });
-  }
-
-  const {
-    number,
-    description,
-    amount,      // major units (e.g., 25000.00)
-    currency,
-    status,
-    due_date,   // YYYY-MM-DD
-  } = body as {
-    number?: string | null;
-    description?: string | null;
-    amount?: number | null;
-    currency?: string | null;
-    status?: string | null;
-    due_date?: string | null;
-  };
-
-  // Basic validation (client also validates)
-  if (status && !ALLOWED_STATUS.has(String(status))) {
-    return NextResponse.json({ error: "invalid_status" }, { status: 400 });
-  }
-
-  let amount_cents: number | null = null;
-  if (typeof amount === "number" && isFinite(amount) && amount >= 0) {
-    amount_cents = Math.round(amount * 100);
-  } else if (amount === null) {
-    amount_cents = null;
-  }
-
-  // Build update patch (only defined keys)
-  const patch: Record<string, any> = {};
-  if (typeof number !== "undefined") patch.number = number;
-  if (typeof description !== "undefined") patch.description = description;
-  if (typeof currency !== "undefined") patch.currency = currency?.toUpperCase?.() ?? currency;
-  if (typeof status !== "undefined") patch.status = status;
-  if (typeof due_date !== "undefined") patch.due_date = due_date ? new Date(due_date).toISOString().slice(0,10) : null;
-  if (typeof amount_cents !== "undefined") patch.amount_cents = amount_cents;
-
-  // Connect to Supabase as the logged-in user
-  const cookieStore = cookies();
-  const supabase = createServerClient(URL, ANON, {
-    cookies: { get: (n: string) => cookieStore.get(n)?.value },
+function sb() {
+  const jar = cookies();
+  return createServerClient(SUPABASE_URL, SUPABASE_ANON, {
+    cookies: {
+      get: (n: string) => jar.get(n)?.value,
+      set() {},
+      remove() {},
+    },
   });
+}
 
-  // Must be authenticated
-  const { data: meRes } = await supabase.auth.getUser();
-  if (!meRes?.user?.id) {
-    return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+export async function POST(req: Request, ctx: { params: { id: string } }) {
+  const id = ctx.params.id;
+  const bodyType = req.headers.get("content-type") || "";
+  let amount = "", description = "", status = "", due = "";
+  if (bodyType.includes("application/x-www-form-urlencoded") || bodyType.includes("multipart/form-data")) {
+    const form = await req.formData();
+    amount = String(form.get("amount") || "");
+    description = String(form.get("description") || "");
+    status = String(form.get("status") || "");
+    due = String(form.get("due_date") || "");
+  } else if (bodyType.includes("application/json")) {
+    const js = await req.json().catch(() => ({}));
+    amount = String(js.amount || "");
+    description = String(js.description || "");
+    status = String(js.status || "");
+    due = String(js.due_date || "");
   }
 
-  // RLS handles whether this user can update this invoice
-  const { data, error } = await supabase
-    .from("invoices")
-    .update(patch)
-    .eq("id", id)
-    .select("id")
-    .maybeSingle();
+  const amt = Number(String(amount).replace(/[, ]+/g, ""));
+  const amount_cents = Number.isFinite(amt) ? Math.round(amt * 100) : null;
+  const allowed = new Set(["OPEN", "PAID"]); // keep simple for now
+  const upd: any = {
+    description: description || null,
+    due_date: due || null,
+  };
+  if (amount_cents !== null) upd.amount_cents = amount_cents;
+  if (allowed.has((status || "").toUpperCase())) upd.status = (status || "").toUpperCase();
 
-  if (error) {
-    return NextResponse.json({ error: "update_failed", detail: error.message }, { status: 400 });
-  }
-  if (!data) {
-    return NextResponse.json({ error: "not_found" }, { status: 404 });
-  }
+  const client = sb();
 
-  return NextResponse.json({ ok: true, id: data.id });
+  // RLS enforces landlord ownership; we still return friendly errors
+  const { data, error } = await client.from("invoices").update(upd).eq("id", id).select().single();
+  if (error) return NextResponse.json({ error: "update_failed", detail: error.message }, { status: 400 });
+
+  const back = new URL(`/landlord/invoices/${id}/edit?saved=1`, req.url);
+  return NextResponse.redirect(back, 303);
 }
