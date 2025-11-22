@@ -1,193 +1,192 @@
 // app/tenant/payments/page.tsx
-import Link from "next/link";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
+import Link from "next/link";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-type RawRow = {
+type Row = {
   id: string;
   invoice_id: string | null;
   amount_cents: number | null;
   currency: string | null;
-  status: string | null;
+  status: string | null; // PENDING | CONFIRMED
   reference: string | null;
   created_at: string | null;
   confirmed_at: string | null;
-  invoice?: any;
+  invoice?: { id: string; number: string | number; due_date: string | null } | null;
 };
 
-type Row = {
-  id: string;
-  invoiceId: string | null;
-  invoiceNumber: string | null;
-  amountCents: number;
-  currency: string;
-  status: string;
-  reference: string | null;
-  createdAt: string | null;
-  confirmedAt: string | null;
-};
-
-function fmtAmt(cents?: number | null, ccy?: string | null) {
-  const v = ((Number(cents || 0)) / 100).toFixed(2);
-  return `${v} ${ccy || ""}`.trim();
+function fmtMoney(cents: number | null | undefined, curr: string | null | undefined) {
+  const v = (cents ?? 0) / 100;
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: (curr || "PKR").toUpperCase(),
+      maximumFractionDigits: 2,
+    }).format(v);
+  } catch {
+    return `${v.toFixed(2)} ${curr || ""}`.trim();
+  }
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const s = status?.toLowerCase();
-  const styles =
-    s === "confirmed" || s === "paid"
-      ? "bg-green-100 text-green-700"
-      : s === "pending" || s === "open"
-      ? "bg-yellow-100 text-yellow-800"
-      : s === "failed" || s === "overdue"
-      ? "bg-red-100 text-red-700"
-      : "bg-gray-100 text-gray-700";
-  const label =
-    s === "confirmed"
-      ? "Confirmed"
-      : s === "paid"
-      ? "Paid"
-      : s === "pending"
-      ? "Pending"
-      : s === "open"
-      ? "Open"
-      : s === "failed"
-      ? "Failed"
-      : s === "overdue"
-      ? "Overdue"
-      : status || "—";
-  return <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${styles}`}>{label}</span>;
+function fmtDate(iso: string | null | undefined) {
+  if (!iso) return "—";
+  try {
+    return new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "2-digit" }).format(
+      new Date(iso)
+    );
+  } catch {
+    return iso.slice(0, 10);
+  }
 }
 
-async function loadRows() {
-  const jar = cookies();
-  const sb = createServerClient(SUPABASE_URL, SUPABASE_ANON, {
-    cookies: { get: (name: string) => jar.get(name)?.value },
-  });
-
-  const { data: auth } = await sb.auth.getUser();
-  if (!auth?.user?.id) return [];
-
-  const { data, error } = await sb
-    .from("payments")
-    .select(
-      [
-        "id",
-        "invoice_id",
-        "amount_cents",
-        "currency",
-        "status",
-        "reference",
-        "created_at",
-        "confirmed_at",
-        "invoice:invoices(id,number,due_date)",
-      ].join(",")
-    )
-    .eq("tenant_id", auth.user.id)
-    .order("created_at", { ascending: false })
-    .limit(200);
-
-  if (error) return [];
-
-  // 🔧 SAFE NARROW: TS sometimes widens to GenericStringError[] in strict mode.
-  const raw: RawRow[] = Array.isArray(data) ? ((data as unknown) as RawRow[]) : [];
-
-  const rows: Row[] = raw.map((r) => {
-    const inv = Array.isArray(r.invoice) ? r.invoice[0] : r.invoice;
-    return {
-      id: r.id,
-      invoiceId: inv?.id ?? r.invoice_id ?? null,
-      invoiceNumber: inv?.number ?? null,
-      amountCents: Number(r.amount_cents || 0),
-      currency: r.currency || "PKR",
-      status: r.status || "pending",
-      reference: r.reference || null,
-      createdAt: r.created_at || null,
-      confirmedAt: r.confirmed_at || null,
-    };
-  });
-
-  return rows;
+function Pill({ tone, children }: { tone: "blue" | "green" | "gray"; children: React.ReactNode }) {
+  const map = {
+    blue: "border-blue-300 text-blue-800 bg-blue-50",
+    green: "border-green-300 text-green-800 bg-green-50",
+    gray: "border-gray-300 text-gray-700 bg-gray-50",
+  } as const;
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${map[tone]}`}>
+      {children}
+    </span>
+  );
 }
 
 export default async function TenantPaymentsPage() {
-  const rows = await loadRows();
+  const jar = cookies();
+  const sb = createServerClient(SUPABASE_URL, SUPABASE_ANON, {
+    cookies: {
+      get: (n: string) => jar.get(n)?.value,
+      set() {},
+      remove() {},
+    },
+  });
+
+  const { data: auth } = await sb.auth.getUser();
+  const uid = auth?.user?.id;
+  if (!uid) {
+    return (
+      <div className="mx-auto w-full max-w-4xl p-6">
+        <h1 className="text-xl font-semibold">My Payments</h1>
+        <p className="mt-4 text-sm text-red-600">Not signed in.</p>
+      </div>
+    );
+  }
+
+  // Pull latest 200, newest first
+  const { data, error } = await sb
+    .from("payments")
+    .select(
+      `
+      id, invoice_id, amount_cents, currency, status, reference, created_at, confirmed_at,
+      invoice:invoices ( id, number, due_date )
+    `
+    )
+    .eq("tenant_id", uid)
+    .order("created_at", { ascending: false })
+    .limit(200);
+
+  if (error) {
+    return (
+      <div className="mx-auto w-full max-w-4xl p-6">
+        <h1 className="text-xl font-semibold">My Payments</h1>
+        <p className="mt-4 text-sm text-red-600">Failed to load: {error.message}</p>
+      </div>
+    );
+  }
+
+  const rows: Row[] = ((data as any[]) || []).map((r: any) => {
+    const inv = Array.isArray(r.invoice) ? r.invoice[0] : r.invoice;
+    return {
+      id: r.id,
+      invoice_id: r.invoice_id ?? inv?.id ?? null,
+      amount_cents: r.amount_cents ?? null,
+      currency: r.currency ?? null,
+      status: r.status ?? "PENDING",
+      reference: r.reference ?? null,
+      created_at: r.created_at ?? null,
+      confirmed_at: r.confirmed_at ?? null,
+      invoice: inv
+        ? { id: String(inv.id), number: inv.number, due_date: inv.due_date ?? null }
+        : null,
+    };
+  });
 
   return (
-    <div className="mx-auto w-full max-w-4xl p-4 md:p-6">
+    <div className="mx-auto w-full max-w-5xl p-4 md:p-6">
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-semibold">My Payments</h1>
-        <Link href="/tenant/invoices" className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50">
-          ← My Invoices
-        </Link>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border">
-        <table className="min-w-full text-sm">
-          <thead className="bg-gray-50 text-left text-xs font-semibold text-gray-600">
-            <tr>
-              <th className="px-3 py-2">Date</th>
-              <th className="px-3 py-2">Invoice</th>
-              <th className="px-3 py-2">Amount</th>
-              <th className="px-3 py-2">Status</th>
-              <th className="px-3 py-2">Reference</th>
-              <th className="px-3 py-2">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {rows.length === 0 && (
+      {rows.length === 0 ? (
+        <p className="text-sm text-gray-500">No payments yet.</p>
+      ) : (
+        <div className="overflow-x-auto rounded-2xl border">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 text-left">
               <tr>
-                <td colSpan={6} className="px-3 py-6 text-center text-gray-500">
-                  No payments yet.
-                </td>
+                <th className="px-4 py-3">When</th>
+                <th className="px-4 py-3">Invoice</th>
+                <th className="px-4 py-3">Amount</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Reference</th>
+                <th className="px-4 py-3 text-right">Actions</th>
               </tr>
-            )}
-            {rows.map((r) => (
-              <tr key={r.id} className="hover:bg-gray-50">
-                <td className="px-3 py-2">{r.createdAt ? new Date(r.createdAt).toLocaleDateString() : "—"}</td>
-                <td className="px-3 py-2">
-                  {r.invoiceNumber ? (
-                    <Link className="underline" href={`/tenant/invoices/${r.invoiceId}`}>
-                      {r.invoiceNumber}
-                    </Link>
-                  ) : (
-                    r.invoiceId || "—"
-                  )}
-                </td>
-                <td className="px-3 py-2">{fmtAmt(r.amountCents, r.currency)}</td>
-                <td className="px-3 py-2">
-                  <StatusBadge status={r.status} />
-                </td>
-                <td className="px-3 py-2">{r.reference || "—"}</td>
-                <td className="px-3 py-2">
-                  <div className="flex flex-wrap gap-2">
-                    {r.invoiceId ? (
-                      <Link href={`/tenant/invoices/${r.invoiceId}`} className="rounded border px-2 py-1">
-                        View invoice
-                      </Link>
-                    ) : null}
-                    {r.status.toLowerCase() === "confirmed" && r.invoiceId ? (
-                      <a
-                        href={`/api/tenant/invoices/${r.invoiceId}/receipt`}
-                        className="rounded border px-2 py-1"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        Download receipt (PDF)
-                      </a>
-                    ) : (
-                      <span className="text-xs text-gray-400">Receipt after confirmation</span>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const paid = (r.status || "").toUpperCase() === "CONFIRMED";
+                return (
+                  <tr key={r.id} className="border-t">
+                    <td className="px-4 py-3">{fmtDate(r.created_at)}</td>
+                    <td className="px-4 py-3">
+                      {r.invoice ? (
+                        <Link
+                          href={`/tenant/invoices/${r.invoice.id}`}
+                          className="font-medium hover:underline"
+                        >
+                          {String(r.invoice.number)}
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="px-4 py-3">{fmtMoney(r.amount_cents, r.currency)}</td>
+                    <td className="px-4 py-3">{paid ? <Pill tone="green">CONFIRMED</Pill> : <Pill tone="blue">PENDING</Pill>}</td>
+                    <td className="px-4 py-3">{r.reference || "—"}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-2">
+                        {r.invoice_id ? (
+                          <Link
+                            href={`/api/tenant/invoices/${r.invoice_id}/pdf`}
+                            className="rounded-xl border px-3 py-1.5 hover:bg-gray-50"
+                          >
+                            Invoice PDF
+                          </Link>
+                        ) : null}
+                        {/* Receipt PDF (available after confirm). Route exists and will 404 if none yet. */}
+                        {r.invoice_id && paid ? (
+                          <Link
+                            href={`/api/tenant/invoices/${r.invoice_id}/receipt`}
+                            className="rounded-xl border px-3 py-1.5 hover:bg-gray-50"
+                          >
+                            Receipt PDF
+                          </Link>
+                        ) : (
+                          <span className="rounded-xl border px-3 py-1.5 text-gray-300">Receipt</span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
