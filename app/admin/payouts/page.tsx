@@ -30,7 +30,7 @@ export default async function AdminPayoutsPage({ searchParams }: { searchParams?
   const sb = sbFromCookies();
 
   // guard: must be staff/admin
-  const [{ data: userRes }, { data: profRes, error: profErr }] = await Promise.all([
+  const [{ data: userRes }, { data: profRes }] = await Promise.all([
     sb.auth.getUser(),
     sb.from("profiles").select("id, role, email, full_name").limit(1),
   ]);
@@ -50,6 +50,8 @@ export default async function AdminPayoutsPage({ searchParams }: { searchParams?
   const q = (typeof sp.q === "string" ? sp.q : "") || "";
   const ok = (typeof sp.ok === "string" ? sp.ok : "") || "";
   const err = (typeof sp.err === "string" ? sp.err : "") || "";
+  const balCents = Number((typeof sp.bal === "string" ? sp.bal : "0") || "0");
+  const balCur = (typeof sp.cur === "string" ? sp.cur : "") || "";
 
   // query
   let query = sb
@@ -105,7 +107,18 @@ export default async function AdminPayoutsPage({ searchParams }: { searchParams?
             (ok ? "border-emerald-300 bg-emerald-50 text-emerald-800" : "border-rose-300 bg-rose-50 text-rose-800")
           }
         >
-          {ok ? "Action completed." : `Error: ${err}`}
+          {ok ? (
+            <div className="flex items-center justify-between gap-3">
+              <span>Action completed.</span>
+              {balCents ? (
+                <span className="font-medium">
+                  New balance: {fmtMoney(balCents, balCur || "PKR")}
+                </span>
+              ) : null}
+            </div>
+          ) : (
+            `Error: ${err}`
+          )}
         </div>
       )}
 
