@@ -1,56 +1,52 @@
 // lib/email.ts
-export type SendEmailOpts = {
+export type MailResult = { ok: true } | { ok: false; reason: string };
+
+function isConfigured() {
+  return !!process.env.RESEND_API_KEY && !!process.env.MAIL_FROM;
+}
+
+export async function sendEmail(opts: {
   to: string;
   subject: string;
-  html: string;
-  attachments?: Array<{
-    filename: string;
-    contentType: string;
-    contentBase64: string;
-  }>;
-  fromOverride?: string;
-};
+  text: string;
+  html?: string;
+}): Promise<MailResult> {
+  try {
+    if (!isConfigured()) return { ok: false, reason: "no_email_keys" };
+    if (!opts.to || !opts.to.includes("@")) return { ok: false, reason: "bad_to" };
 
-/**
- * Sends an email via Resend API if RESEND_API_KEY is set.
- * Otherwise, safe no-op (returns { ok: false, reason: "noop" }).
- */
-export async function sendEmailResend(opts: SendEmailOpts) {
-  const apiKey = process.env.RESEND_API_KEY;
-  const fromDefault = process.env.RESEND_FROM || "RentBack <no-reply@rentback.app>";
+    const resp = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: process.env.MAIL_FROM,
+        to: [opts.to],
+        subject: opts.subject,
+        text: opts.text,
+        html: opts.html || `<pre>${escapeHtml(opts.text)}</pre>`,
+      }),
+    });
 
-  if (!apiKey) {
-    // no-op in environments without email credentials
-    return { ok: false as const, reason: "noop" };
+    if (!resp.ok) {
+      const detail = await safeText(resp);
+      return { ok: false, reason: `resend_${resp.status}_${detail}` };
+    }
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, reason: String(e?.message || e || "unknown") };
   }
+}
 
-  const payload: any = {
-    from: opts.fromOverride || fromDefault,
-    to: [opts.to],
-    subject: opts.subject,
-    html: opts.html,
-  };
+function escapeHtml(s: string) {
+  return s
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
 
-  if (opts.attachments?.length) {
-    payload.attachments = opts.attachments.map(a => ({
-      filename: a.filename,
-      content: a.contentBase64,
-      content_type: a.contentType,
-    }));
-  }
-
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    return { ok: false as const, reason: `resend_failed: ${res.status} ${text}` };
-  }
-  return { ok: true as const };
+async function safeText(r: Response) {
+  try { return await r.text(); } catch { return ""; }
 }
