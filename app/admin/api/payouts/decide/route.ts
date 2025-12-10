@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
+import { sendEmail } from "@/lib/email";
 
 function sbFromCookies() {
   const cookieStore = cookies();
@@ -24,6 +25,14 @@ async function getAuthedStaff() {
   const role = prof?.[0]?.role;
   if (role !== "staff" && role !== "admin") return { ok: false as const, status: 403, msg: "forbidden" as const };
   return { ok: true as const, sb, uid: userRes.user.id };
+}
+
+function fmtMoney(cents: number, currency = "PKR") {
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency }).format((cents || 0) / 100);
+  } catch {
+    return `${(cents || 0) / 100} ${currency}`;
+  }
 }
 
 export async function POST(req: Request) {
@@ -56,16 +65,16 @@ export async function POST(req: Request) {
   }
 
   // Load payout
-  const { data: row, error: loadErr } = await sb
+  const { data: payout, error: loadErr } = await sb
     .from("landlord_payouts")
     .select("id, landlord_id, amount_cents, currency, status")
     .eq("id", id)
     .maybeSingle();
 
-  if (loadErr || !row) {
+  if (loadErr || !payout) {
     return NextResponse.redirect(new globalThis.URL("/admin/payouts?err=not_found", process.env.SITE_URL), 303);
   }
-  if (row.status !== "pending") {
+  if (payout.status !== "pending") {
     return NextResponse.redirect(new globalThis.URL("/admin/payouts?err=already_decided", process.env.SITE_URL), 303);
   }
 
@@ -83,34 +92,67 @@ export async function POST(req: Request) {
 
   // If approved, add a ledger debit entry
   if (nextStatus === "approved") {
-    const { error: ledErr } = await sb.from("landlord_ledger").insert({
-      landlord_id: row.landlord_id,
-      payout_id: row.id,
-      amount_cents: row.amount_cents,
-      currency: row.currency || "PKR",
+    await sb.from("landlord_ledger").insert({
+      landlord_id: payout.landlord_id,
+      payout_id: payout.id,
+      amount_cents: payout.amount_cents,
+      currency: payout.currency || "PKR",
       type: "debit",
       source: "payout",
     });
-    if (ledErr) {
-      return NextResponse.redirect(new globalThis.URL("/admin/payouts?ok=1&err=ledger_warn", process.env.SITE_URL), 303);
-    }
   }
 
-  // Compute NEW BALANCE (credits - debits) for this landlord/currency
-  const currency = row.currency || "PKR";
-  const { data: ledgerRows, error: balErr } = await sb
+  // Compute NEW BALANCE for toast
+  const currency = payout.currency || "PKR";
+  const { data: ledgerRows } = await sb
     .from("landlord_ledger")
     .select("amount_cents, type")
-    .eq("landlord_id", row.landlord_id)
+    .eq("landlord_id", payout.landlord_id)
     .eq("currency", currency)
     .limit(20000);
 
   let balanceCents = 0;
-  if (!balErr && Array.isArray(ledgerRows)) {
+  if (Array.isArray(ledgerRows)) {
     balanceCents = ledgerRows.reduce((acc: number, r: any) => {
       const amt = Number(r?.amount_cents || 0);
       return acc + (r?.type === "credit" ? amt : -amt);
     }, 0);
+  }
+
+  // Fetch landlord email
+  const { data: landlord } = await sb
+    .from("profiles")
+    .select("email, full_name")
+    .eq("id", payout.landlord_id)
+    .maybeSingle();
+
+  const to = landlord?.email || "";
+  const amountStr = fmtMoney(Number(payout.amount_cents || 0), currency);
+  const statusWord = nextStatus === "approved" ? "APPROVED" : "DENIED";
+
+  // Compose email (no-op if keys missing)
+  if (to.includes("@")) {
+    const site = process.env.SITE_URL || "https://www.rentback.app";
+    const subject = `Payout ${statusWord}: ${amountStr}`;
+    const text = [
+      `Hello${landlord?.full_name ? " " + landlord.full_name : ""},`,
+      ``,
+      `Your payout request (${payout.id}) has been ${statusWord.toLowerCase()}.`,
+      `Amount: ${amountStr}`,
+      `Currency: ${currency}`,
+      ``,
+      nextStatus === "approved"
+        ? `Funds will be processed per your payout method on file.`
+        : `If you believe this was in error, reply to this email or contact support.`,
+      ``,
+      `Current balance: ${fmtMoney(balanceCents, currency)}`,
+      ``,
+      `You can review details anytime at ${site}/admin/payouts (staff view) or in your landlord dashboard when available.`,
+      ``,
+      `— RentBack`,
+    ].join("\n");
+
+    await sendEmail({ to, subject, text });
   }
 
   const url = new globalThis.URL("/admin/payouts", process.env.SITE_URL);
