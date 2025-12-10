@@ -20,15 +20,17 @@ async function getAuthedStaff() {
   const sb = sbFromCookies();
   const { data: userRes } = await sb.auth.getUser();
   if (!userRes?.user) return { ok: false as const, status: 401, msg: "unauthorized" as const };
-  const { data: prof, error } = await sb.from("profiles").select("id, role").limit(1);
+  const { data: prof } = await sb.from("profiles").select("id, role").limit(1);
   const role = prof?.[0]?.role;
-  if (error || (role !== "staff" && role !== "admin")) return { ok: false as const, status: 403, msg: "forbidden" as const };
+  if (role !== "staff" && role !== "admin") return { ok: false as const, status: 403, msg: "forbidden" as const };
   return { ok: true as const, sb, uid: userRes.user.id };
 }
 
 export async function POST(req: Request) {
   const guard = await getAuthedStaff();
-  if (!guard.ok) return NextResponse.redirect(new globalThis.URL("/admin/payouts?err=forbidden", process.env.SITE_URL), 303);
+  if (!guard.ok) {
+    return NextResponse.redirect(new globalThis.URL("/admin/payouts?err=forbidden", process.env.SITE_URL), 303);
+  }
   const { sb, uid } = guard;
 
   // Support form or JSON
@@ -50,10 +52,7 @@ export async function POST(req: Request) {
   }
 
   if (!id || !["approve", "deny"].includes(decision)) {
-    return NextResponse.redirect(
-      new globalThis.URL("/admin/payouts?err=bad_request", process.env.SITE_URL),
-      303
-    );
+    return NextResponse.redirect(new globalThis.URL("/admin/payouts?err=bad_request", process.env.SITE_URL), 303);
   }
 
   // Load payout
@@ -66,7 +65,6 @@ export async function POST(req: Request) {
   if (loadErr || !row) {
     return NextResponse.redirect(new globalThis.URL("/admin/payouts?err=not_found", process.env.SITE_URL), 303);
   }
-
   if (row.status !== "pending") {
     return NextResponse.redirect(new globalThis.URL("/admin/payouts?err=already_decided", process.env.SITE_URL), 303);
   }
@@ -79,12 +77,11 @@ export async function POST(req: Request) {
     .from("landlord_payouts")
     .update({ status: nextStatus, decided_at, decided_by: uid, notes })
     .eq("id", id);
-
   if (upErr) {
     return NextResponse.redirect(new globalThis.URL("/admin/payouts?err=update_failed", process.env.SITE_URL), 303);
   }
 
-  // On approve → write a ledger debit
+  // If approved, add a ledger debit entry
   if (nextStatus === "approved") {
     const { error: ledErr } = await sb.from("landlord_ledger").insert({
       landlord_id: row.landlord_id,
@@ -95,10 +92,31 @@ export async function POST(req: Request) {
       source: "payout",
     });
     if (ledErr) {
-      // Still considered decided; but surface message
       return NextResponse.redirect(new globalThis.URL("/admin/payouts?ok=1&err=ledger_warn", process.env.SITE_URL), 303);
     }
   }
 
-  return NextResponse.redirect(new globalThis.URL("/admin/payouts?ok=1", process.env.SITE_URL), 303);
+  // Compute NEW BALANCE (credits - debits) for this landlord/currency
+  const currency = row.currency || "PKR";
+  const { data: ledgerRows, error: balErr } = await sb
+    .from("landlord_ledger")
+    .select("amount_cents, type")
+    .eq("landlord_id", row.landlord_id)
+    .eq("currency", currency)
+    .limit(20000);
+
+  let balanceCents = 0;
+  if (!balErr && Array.isArray(ledgerRows)) {
+    balanceCents = ledgerRows.reduce((acc: number, r: any) => {
+      const amt = Number(r?.amount_cents || 0);
+      return acc + (r?.type === "credit" ? amt : -amt);
+    }, 0);
+  }
+
+  const url = new globalThis.URL("/admin/payouts", process.env.SITE_URL);
+  url.searchParams.set("ok", "1");
+  if (balanceCents) url.searchParams.set("bal", String(balanceCents));
+  url.searchParams.set("cur", currency);
+
+  return NextResponse.redirect(url, 303);
 }
