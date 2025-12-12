@@ -1,9 +1,10 @@
+// app/admin/rewards/offers/page.tsx
 import { cookies } from "next/headers";
+import { createClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { createServerClient } from "@supabase/ssr";
 
-// Path of this page, used by revalidatePath
-const PAGE_PATH = "/admin/rewards/offers";
+export const metadata = { title: "Admin · Reward Offers — RentBack" };
 
 type Offer = {
   id: string;
@@ -16,195 +17,177 @@ type Offer = {
   updated_at: string;
 };
 
-function getSupabaseServer() {
-  const cookieStore = cookies();
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
-        },
-        set() {
-          // no-op for server actions; auth cookie is already present
-        },
-        remove() {
-          // no-op
-        },
-      },
-    }
-  );
-}
-
 async function fetchOffers(): Promise<Offer[]> {
-  const sb = getSupabaseServer();
+  const sb = createClient(cookies());
   const { data, error } = await sb
     .from("reward_offers")
-    .select("id, title, description, points_cost, is_active, stock, created_at, updated_at")
-    .order("created_at", { ascending: false });
-  if (error || !data) return [];
-  return data as Offer[];
+    .select("id,title,description,points_cost,is_active,stock,created_at,updated_at")
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (error) return [];
+  return (data as any) ?? [];
 }
 
-// ——— Server Actions ———
-export async function createOffer(formData: FormData) {
+// ---- server actions (not exported) ----
+async function createOffer(formData: FormData) {
   "use server";
-  const sb = getSupabaseServer();
-  const title = String(formData.get("title") || "").trim();
-  const description = String(formData.get("description") || "").trim() || null;
-  const pointsCost = Number(formData.get("points_cost") || 0);
-  const stockRaw = String(formData.get("stock") || "").trim();
-  const stock = stockRaw === "" ? null : Number(stockRaw);
-  const isActive = formData.get("is_active") === "on";
+  const sb = createClient(cookies());
+  const title = String(formData.get("title") || "").trim().slice(0, 120);
+  const description = String(formData.get("description") || "").trim().slice(0, 2000) || null;
+  const points_cost = Number(formData.get("points_cost") || 0);
+  const stockStr = String(formData.get("stock") || "").trim();
+  const stock = stockStr === "" ? null : Number(stockStr);
+  const is_active = formData.get("is_active") ? true : false;
 
-  if (!title || !Number.isFinite(pointsCost) || pointsCost <= 0) {
-    // Silently ignore invalid; page will re-render unchanged
-    revalidatePath(PAGE_PATH);
-    return;
+  if (!title || !Number.isFinite(points_cost) || points_cost <= 0) {
+    redirect("/admin/rewards/offers?err=invalid_input");
   }
 
-  await sb.from("reward_offers").insert({
+  const { error } = await sb.from("reward_offers").insert({
     title,
     description,
-    points_cost: Math.floor(pointsCost),
-    stock: stock === null || Number.isNaN(stock) ? null : Math.floor(stock),
-    is_active: !!isActive,
+    points_cost,
+    stock,
+    is_active,
   });
 
-  revalidatePath(PAGE_PATH);
+  if (error) {
+    redirect("/admin/rewards/offers?err=" + encodeURIComponent(error.message.slice(0, 120)));
+  }
+
+  revalidatePath("/admin/rewards/offers");
+  redirect("/admin/rewards/offers?ok=created");
 }
 
-export async function toggleOffer(formData: FormData) {
+async function toggleActive(formData: FormData) {
   "use server";
-  const sb = getSupabaseServer();
+  const sb = createClient(cookies());
   const id = String(formData.get("id") || "");
-  const current = String(formData.get("current")) === "true";
-  if (!id) return;
-  await sb.from("reward_offers").update({ is_active: !current }).eq("id", id);
-  revalidatePath(PAGE_PATH);
+  const next = String(formData.get("next") || "") === "true";
+  if (!id) redirect("/admin/rewards/offers?err=missing_id");
+  const { error } = await sb.from("reward_offers").update({ is_active: next }).eq("id", id);
+  if (error) redirect("/admin/rewards/offers?err=" + encodeURIComponent(error.message.slice(0, 120)));
+  revalidatePath("/admin/rewards/offers");
+  redirect("/admin/rewards/offers?ok=updated");
 }
 
-export async function updateOffer(formData: FormData) {
+async function deleteOffer(formData: FormData) {
   "use server";
-  const sb = getSupabaseServer();
+  const sb = createClient(cookies());
   const id = String(formData.get("id") || "");
-  if (!id) return;
-  const title = String(formData.get("title") || "").trim();
-  const description = String(formData.get("description") || "").trim() || null;
-  const pointsCost = Number(formData.get("points_cost") || 0);
-  const stockRaw = String(formData.get("stock") || "").trim();
-  const stock = stockRaw === "" ? null : Number(stockRaw);
-
-  const patch: Partial<Offer> & { points_cost?: number } = {} as any;
-  if (title) (patch as any).title = title;
-  (patch as any).description = description;
-  if (Number.isFinite(pointsCost) && pointsCost > 0) (patch as any).points_cost = Math.floor(pointsCost);
-  (patch as any).stock = stock === null || Number.isNaN(stock) ? null : Math.floor(stock);
-
-  await sb.from("reward_offers").update(patch).eq("id", id);
-  revalidatePath(PAGE_PATH);
+  if (!id) redirect("/admin/rewards/offers?err=missing_id");
+  const { error } = await sb.from("reward_offers").delete().eq("id", id);
+  if (error) redirect("/admin/rewards/offers?err=" + encodeURIComponent(error.message.slice(0, 120)));
+  revalidatePath("/admin/rewards/offers");
+  redirect("/admin/rewards/offers?ok=deleted");
 }
+// ---- end actions ----
 
-export async function deleteOffer(formData: FormData) {
-  "use server";
-  const sb = getSupabaseServer();
-  const id = String(formData.get("id") || "");
-  if (!id) return;
-  await sb.from("reward_offers").delete().eq("id", id);
-  revalidatePath(PAGE_PATH);
-}
-
-export default async function AdminOffersPage() {
+export default async function AdminRewardOffersPage({
+  searchParams,
+}: {
+  searchParams: { ok?: string; err?: string };
+}) {
+  const ok = searchParams?.ok || "";
+  const err = searchParams?.err || "";
   const offers = await fetchOffers();
 
   return (
-    <div className="p-6 space-y-8">
+    <div className="mx-auto max-w-5xl p-6 space-y-8">
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Reward Offers</h1>
       </header>
 
-      {/* Create Offer */}
-      <section className="rounded-2xl border p-4">
-        <h2 className="text-lg font-medium mb-3">Create new offer</h2>
-        <form action={createOffer} className="grid grid-cols-1 md:grid-cols-6 gap-3">
-          <input name="title" placeholder="Title" required className="col-span-2 rounded-md border p-2" />
-          <input name="description" placeholder="Description (optional)" className="col-span-2 rounded-md border p-2" />
-          <input name="points_cost" placeholder="Points cost" inputMode="numeric" className="col-span-1 rounded-md border p-2" />
-          <input name="stock" placeholder="Stock (blank = ∞)" inputMode="numeric" className="col-span-1 rounded-md border p-2" />
-          <label className="flex items-center gap-2 col-span-2 md:col-span-6">
+      {ok ? <div className="rounded border bg-green-50 dark:bg-green-900/20 p-3 text-sm">{ok}</div> : null}
+      {err ? <div className="rounded border bg-red-50 dark:bg-red-900/20 p-3 text-sm">{err}</div> : null}
+
+      <section className="rounded-xl border p-4">
+        <h2 className="font-medium mb-3">Create Offer</h2>
+        <form action={createOffer} className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <input
+            name="title"
+            placeholder="Title"
+            required
+            className="border rounded px-3 py-2"
+          />
+          <input
+            name="points_cost"
+            type="number"
+            min={1}
+            step={1}
+            placeholder="Points cost"
+            required
+            className="border rounded px-3 py-2"
+          />
+          <input
+            name="stock"
+            type="number"
+            min={0}
+            step={1}
+            placeholder="Stock (blank = unlimited)"
+            className="border rounded px-3 py-2"
+          />
+          <label className="inline-flex items-center gap-2">
             <input type="checkbox" name="is_active" defaultChecked />
             <span>Active</span>
           </label>
-          <div className="col-span-2 md:col-span-6">
-            <button className="rounded-xl border px-4 py-2 hover:bg-gray-50">Create</button>
+          <textarea
+            name="description"
+            placeholder="Description (optional)"
+            className="md:col-span-2 border rounded px-3 py-2"
+          />
+          <div className="md:col-span-2">
+            <button className="rounded border px-3 py-2">Create</button>
           </div>
         </form>
       </section>
 
-      {/* List */}
-      <section className="rounded-2xl border overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50">
+      <section className="rounded-xl border overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead className="bg-black/5 dark:bg-white/5">
             <tr>
               <th className="text-left p-3">Title</th>
               <th className="text-left p-3">Cost</th>
               <th className="text-left p-3">Stock</th>
               <th className="text-left p-3">Active</th>
               <th className="text-left p-3">Updated</th>
-              <th className="text-left p-3">Actions</th>
+              <th className="text-right p-3">Actions</th>
             </tr>
           </thead>
           <tbody>
+            {offers.length === 0 && (
+              <tr>
+                <td colSpan={6} className="p-4 opacity-60">No offers yet.</td>
+              </tr>
+            )}
             {offers.map((o) => (
-              <tr key={o.id} className="border-t align-top">
+              <tr key={o.id} className="border-t">
+                <td className="p-3">{o.title}</td>
+                <td className="p-3">{o.points_cost.toLocaleString()}</td>
+                <td className="p-3">{o.stock == null ? "∞" : o.stock}</td>
                 <td className="p-3">
-                  <div className="font-medium">{o.title}</div>
-                  <div className="text-gray-500 max-w-prose">{o.description}</div>
-                </td>
-                <td className="p-3">{o.points_cost}</td>
-                <td className="p-3">{o.stock ?? "∞"}</td>
-                <td className="p-3">
-                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs ${o.is_active ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-600"}`}>
+                  <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs">
                     {o.is_active ? "Active" : "Inactive"}
                   </span>
                 </td>
-                <td className="p-3">{new Date(o.updated_at || o.created_at).toLocaleString()}</td>
-                <td className="p-3 space-y-2">
-                  {/* Toggle */}
-                  <form action={toggleOffer}>
+                <td className="p-3">
+                  {new Date(o.updated_at || o.created_at).toLocaleString()}
+                </td>
+                <td className="p-3 text-right">
+                  <form action={toggleActive} className="inline-block mr-2">
                     <input type="hidden" name="id" value={o.id} />
-                    <input type="hidden" name="current" value={String(o.is_active)} />
-                    <button className="rounded-md border px-3 py-1 text-xs hover:bg-gray-50">
+                    <input type="hidden" name="next" value={(!o.is_active).toString()} />
+                    <button className="border rounded px-2 py-1 text-xs">
                       {o.is_active ? "Deactivate" : "Activate"}
                     </button>
                   </form>
-
-                  {/* Update minimal fields */}
-                  <form action={updateOffer} className="grid grid-cols-2 gap-2">
+                  <form action={deleteOffer} className="inline-block">
                     <input type="hidden" name="id" value={o.id} />
-                    <input name="title" defaultValue={o.title} className="rounded-md border p-1 text-xs" />
-                    <input name="points_cost" defaultValue={String(o.points_cost)} inputMode="numeric" className="rounded-md border p-1 text-xs" />
-                    <input name="stock" defaultValue={o.stock == null ? "" : String(o.stock)} inputMode="numeric" className="rounded-md border p-1 text-xs" />
-                    <input name="description" defaultValue={o.description ?? ""} className="col-span-2 rounded-md border p-1 text-xs" />
-                    <div className="col-span-2">
-                      <button className="rounded-md border px-3 py-1 text-xs hover:bg-gray-50">Save</button>
-                    </div>
-                  </form>
-
-                  {/* Delete */}
-                  <form action={deleteOffer}>
-                    <input type="hidden" name="id" value={o.id} />
-                    <button className="rounded-md border px-3 py-1 text-xs text-red-600 hover:bg-red-50">Delete</button>
+                    <button className="border rounded px-2 py-1 text-xs">Delete</button>
                   </form>
                 </td>
               </tr>
             ))}
-            {offers.length === 0 && (
-              <tr>
-                <td className="p-6 text-gray-500" colSpan={6}>No offers yet.</td>
-              </tr>
-            )}
           </tbody>
         </table>
       </section>
