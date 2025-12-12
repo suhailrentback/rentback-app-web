@@ -1,215 +1,192 @@
 // app/admin/payouts/page.tsx
 import { cookies } from "next/headers";
-import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
 import Link from "next/link";
-import React from "react";
-
-export const dynamic = "force-dynamic";
+import { createClient } from "@/lib/supabase/server";
 
 type Row = {
   id: string;
   landlord_id: string | null;
   amount_cents: number;
-  currency?: string | null;
-  status: "pending" | "approved" | "denied";
-  notes?: string | null;
-  created_at: string;
-  decided_by?: string | null;
-  decided_at?: string | null;
+  currency: string | null;
+  status: "REQUESTED" | "APPROVED" | "DENIED" | string;
+  requested_at: string;
+  decided_at: string | null;
+  decided_by: string | null;
+  note: string | null;
 };
 
-function formatMoney(cents: number, currency?: string | null) {
-  const n = Number.isFinite(cents) ? cents : 0;
-  const cur = currency || "EUR";
-  return `${cur} ${(n / 100).toFixed(2)}`;
-}
+export const metadata = { title: "Admin · Payouts — RentBack" };
 
-function statusPill(s: Row["status"]) {
-  const base = "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium";
-  const cls =
-    s === "approved"
-      ? "bg-green-100 text-green-800"
-      : s === "denied"
-      ? "bg-red-100 text-red-800"
-      : "bg-gray-100 text-gray-800";
-  const dot =
-    s === "approved" ? "bg-green-500" : s === "denied" ? "bg-red-500" : "bg-gray-500";
-  return (
-    <span className={`${base} ${cls}`}>
-      <span className={`mr-1.5 h-1.5 w-1.5 rounded-full ${dot}`} />
-      {s.toUpperCase()}
-    </span>
-  );
+async function getRows(status?: string) {
+  const sb = await createClient(cookies());
+  let q = sb
+    .from("payout_requests")
+    .select(
+      "id, landlord_id, amount_cents, currency, status, requested_at, decided_at, decided_by, note"
+    )
+    .order("requested_at", { ascending: false })
+    .limit(200);
+  if (status) q = q.eq("status", status);
+  const { data, error } = await q;
+  return error ? [] : ((data as any) ?? []);
 }
 
 export default async function AdminPayoutsPage({
   searchParams,
 }: {
-  searchParams: { status?: string; q?: string };
+  searchParams: { status?: string; ok?: string; err?: string };
 }) {
-  const status = (searchParams?.status || "").toLowerCase();
-  const q = (searchParams?.q || "").trim();
+  const status = searchParams?.status;
+  const ok = searchParams?.ok || "";
+  const err = searchParams?.err || "";
+  const rows: Row[] = await getRows(status);
 
-  const cookieStore = cookies();
-  const supabase = createServerComponentClient({ cookies: () => cookieStore });
-
-  let query = supabase
-    .from("payout_requests")
-    .select(
-      "id, landlord_id, amount_cents, currency, status, notes, created_at, decided_by, decided_at"
-    )
-    .order("created_at", { ascending: false });
-
-  if (["pending", "approved", "denied"].includes(status)) {
-    query = query.eq("status", status);
-  }
-
-  // Optional naive search: matches id or notes
-  if (q) {
-    // Supabase doesn't support OR ilike nicely in one call without RPC; keep it simple.
-    // Filter by notes; ID filter we’ll just client-side check after fetch.
-    query = query.ilike("notes", `%${q}%`);
-  }
-
-  const { data, error } = await query.limit(300);
-  const dataArr = Array.isArray(data) ? data : [];
-  const rows: Row[] = dataArr
-    .filter((r: any) => (!q ? true : String(r?.id || "").includes(q) || true))
-    .map((r: any) => ({
-      id: String(r.id),
-      landlord_id: r.landlord_id ?? null,
-      amount_cents: Number(r.amount_cents) || 0,
-      currency: r.currency ?? "EUR",
-      status: (r.status || "pending") as Row["status"],
-      notes: r.notes ?? "",
-      created_at: r.created_at || "",
-      decided_by: r.decided_by ?? null,
-      decided_at: r.decided_at ?? null,
-    }));
+  const totalCents = rows.reduce((s, r) => s + (r.amount_cents || 0), 0);
+  const total = (totalCents / 100).toLocaleString(undefined, {
+    style: "currency",
+    currency: rows[0]?.currency || "EUR",
+  });
 
   return (
-    <div className="mx-auto w-full max-w-5xl p-4 md:p-6">
-      <div className="mb-4 flex items-center justify-between gap-3">
+    <div className="mx-auto max-w-5xl p-6 space-y-6">
+      <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Payout Requests</h1>
         <div className="flex items-center gap-2">
-          <Link
-            href={`/admin/api/payouts/export?status=${encodeURIComponent(
-              status || ""
-            )}&q=${encodeURIComponent(q || "")}`}
-            prefetch={false}
-            className="rounded-xl border px-3 py-1.5 text-sm hover:shadow-sm"
-          >
-            Export CSV
-          </Link>
+          <form method="get" action="/admin/api/payouts/export">
+            {status ? <input type="hidden" name="status" value={status} /> : null}
+            <button className="rounded-lg border px-3 py-1.5 text-sm">Export CSV</button>
+          </form>
         </div>
       </div>
 
-      <form className="mb-4 grid gap-3 md:grid-cols-3" method="GET">
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">Status</label>
-          <select
-            className="w-full rounded-xl border px-3 py-2"
-            name="status"
-            defaultValue={status}
-          >
-            <option value="">All</option>
-            <option value="pending">Pending</option>
-            <option value="approved">Approved</option>
-            <option value="denied">Denied</option>
-          </select>
-        </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">Search</label>
-          <input
-            className="w-full rounded-xl border px-3 py-2"
-            name="q"
-            placeholder="Search by ID or notes"
-            defaultValue={q}
-          />
-        </div>
-        <div className="flex items-end">
-          <button className="rounded-xl border px-3 py-2 hover:shadow-sm" type="submit">
-            Apply
-          </button>
-        </div>
-      </form>
+      <div className="flex items-center gap-2 text-sm">
+        <Link
+          href="/admin/payouts"
+          className={`rounded border px-2 py-1 ${!status ? "bg-black/5 dark:bg-white/10" : ""}`}
+        >
+          All
+        </Link>
+        <Link
+          href="/admin/payouts?status=REQUESTED"
+          className={`rounded border px-2 py-1 ${status === "REQUESTED" ? "bg-black/5 dark:bg-white/10" : ""}`}
+        >
+          Requested
+        </Link>
+        <Link
+          href="/admin/payouts?status=APPROVED"
+          className={`rounded border px-2 py-1 ${status === "APPROVED" ? "bg-black/5 dark:bg-white/10" : ""}`}
+        >
+          Approved
+        </Link>
+        <Link
+          href="/admin/payouts?status=DENIED"
+          className={`rounded border px-2 py-1 ${status === "DENIED" ? "bg-black/5 dark:bg-white/10" : ""}`}
+        >
+          Denied
+        </Link>
+      </div>
 
-      <div className="overflow-x-auto rounded-2xl border">
+      {ok && <div className="rounded-lg border p-3 bg-green-50 dark:bg-green-900/20 text-sm">{ok}</div>}
+      {err && <div className="rounded-lg border p-3 bg-red-50 dark:bg-red-900/20 text-sm">{err}</div>}
+
+      <section className="rounded-xl border overflow-x-auto">
         <table className="min-w-full text-sm">
-          <thead className="bg-gray-50">
-            <tr className="text-left">
-              <th className="px-4 py-2">Created</th>
-              <th className="px-4 py-2">Request ID</th>
-              <th className="px-4 py-2">Landlord</th>
-              <th className="px-4 py-2">Amount</th>
-              <th className="px-4 py-2">Status</th>
-              <th className="px-4 py-2">Notes</th>
-              <th className="px-4 py-2">Action</th>
+          <thead className="bg-black/5 dark:bg-white/5">
+            <tr>
+              <th className="text-left p-3">ID</th>
+              <th className="text-left p-3">Landlord</th>
+              <th className="text-left p-3">Amount</th>
+              <th className="text-left p-3">Status</th>
+              <th className="text-left p-3">Requested</th>
+              <th className="text-left p-3">Decided</th>
+              <th className="text-right p-3">Decide</th>
             </tr>
           </thead>
           <tbody>
-            {error ? (
+            {rows.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-6 text-red-600">
-                  Failed to load payout requests.
+                <td colSpan={7} className="p-4 opacity-60">
+                  No payout requests.
                 </td>
               </tr>
-            ) : rows.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="px-4 py-6 text-gray-500">
-                  No payout requests found.
-                </td>
-              </tr>
-            ) : (
-              rows.map((r) => (
-                <tr key={r.id} className="border-t">
-                  <td className="px-4 py-2 whitespace-nowrap">
-                    {new Date(r.created_at).toLocaleString()}
-                  </td>
-                  <td className="px-4 py-2 font-mono">{r.id}</td>
-                  <td className="px-4 py-2 font-mono">{r.landlord_id || "—"}</td>
-                  <td className="px-4 py-2">{formatMoney(r.amount_cents, r.currency)}</td>
-                  <td className="px-4 py-2">{statusPill(r.status)}</td>
-                  <td className="px-4 py-2 max-w-[24ch] truncate" title={r.notes || ""}>
-                    {r.notes || "—"}
-                  </td>
-                  <td className="px-4 py-2">
-                    {r.status === "pending" ? (
-                      <div className="flex items-center gap-2">
-                        <form method="POST" action="/admin/api/payouts/decide">
-                          <input type="hidden" name="id" value={r.id} />
-                          <input type="hidden" name="decision" value="approve" />
-                          <button
-                            className="rounded-xl border px-3 py-1.5 text-xs hover:shadow-sm"
-                            type="submit"
-                          >
-                            Approve
-                          </button>
-                        </form>
-                        <form method="POST" action="/admin/api/payouts/decide">
-                          <input type="hidden" name="id" value={r.id} />
-                          <input type="hidden" name="decision" value="deny" />
-                          <button
-                            className="rounded-xl border px-3 py-1.5 text-xs hover:shadow-sm"
-                            type="submit"
-                          >
-                            Deny
-                          </button>
-                        </form>
-                      </div>
-                    ) : (
-                      <div className="text-xs text-gray-500">
-                        {r.status.toUpperCase()}
-                        {r.decided_at ? ` • ${new Date(r.decided_at).toLocaleString()}` : ""}
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              ))
             )}
+            {rows.map((r) => (
+              <tr key={r.id} className="border-t align-top">
+                <td className="p-3 font-mono text-xs">{r.id}</td>
+                <td className="p-3 font-mono text-xs">{r.landlord_id || "—"}</td>
+                <td className="p-3">
+                  {(r.amount_cents / 100).toLocaleString(undefined, {
+                    style: "currency",
+                    currency: r.currency || "EUR",
+                  })}
+                </td>
+                <td className="p-3">
+                  <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs">
+                    {r.status}
+                  </span>
+                </td>
+                <td className="p-3">
+                  {new Date(r.requested_at).toLocaleString(undefined, {
+                    year: "numeric",
+                    month: "short",
+                    day: "2-digit",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </td>
+                <td className="p-3">
+                  {r.decided_at
+                    ? new Date(r.decided_at).toLocaleString(undefined, {
+                        year: "numeric",
+                        month: "short",
+                        day: "2-digit",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })
+                    : "—"}
+                </td>
+                <td className="p-3 text-right">
+                  {r.status === "REQUESTED" ? (
+                    <div className="flex flex-col gap-2 items-end">
+                      <form method="post" action="/admin/api/payouts/decide" className="flex gap-2">
+                        <input type="hidden" name="id" value={r.id} />
+                        <input
+                          name="note"
+                          placeholder="Note (optional)"
+                          className="border rounded px-2 py-1 text-xs w-48"
+                        />
+                        <button
+                          name="action"
+                          value="approve"
+                          className="border rounded px-2 py-1 text-xs"
+                        >
+                          Approve
+                        </button>
+                        <button name="action" value="deny" className="border rounded px-2 py-1 text-xs">
+                          Deny
+                        </button>
+                      </form>
+                    </div>
+                  ) : (
+                    <div className="text-xs opacity-60">—</div>
+                  )}
+                </td>
+              </tr>
+            ))}
           </tbody>
+          {rows.length > 0 && (
+            <tfoot>
+              <tr className="border-t bg-black/5 dark:bg-white/5">
+                <td className="p-3 font-medium" colSpan={2}>
+                  Total
+                </td>
+                <td className="p-3 font-medium">{total}</td>
+                <td colSpan={4}></td>
+              </tr>
+            </tfoot>
+          )}
         </table>
-      </div>
+      </section>
     </div>
   );
 }
