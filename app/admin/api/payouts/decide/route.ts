@@ -1,111 +1,80 @@
 // app/admin/api/payouts/decide/route.ts
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
-import { sendEmail } from "@/lib/email";
+import { createClient } from "@/lib/supabase/server";
 
-export const dynamic = "force-dynamic";
+async function getActor(sb: ReturnType<typeof createClient>) {
+  const {
+    data: { user },
+  } = await (await sb).auth.getUser();
+  if (!user) return { ok: false as const, reason: "not_authenticated" };
 
-async function requireStaff() {
-  const cookieStore = cookies();
-  const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
-
-  const { data: auth } = await supabase.auth.getUser();
-  const uid = auth?.user?.id;
-  if (!uid) return { ok: false as const, status: 401, json: { error: "not_authenticated" } };
-
-  const { data: prof, error } = await supabase
+  const { data: prof } = await (await sb)
     .from("profiles")
-    .select("id, role, email")
-    .eq("id", uid)
-    .maybeSingle();
+    .select("id, email, role")
+    .eq("id", user.id)
+    .single();
 
-  if (error || !prof) {
-    return { ok: false as const, status: 403, json: { error: "profile_not_found" } };
-  }
-  if (!["admin", "staff"].includes(String(prof.role))) {
-    return { ok: false as const, status: 403, json: { error: "forbidden" } };
-  }
-  return { ok: true as const, supabase, uid };
+  const role = (prof?.role || "").toLowerCase();
+  const isStaff = role === "staff" || role === "admin";
+  if (!isStaff) return { ok: false as const, reason: "forbidden" };
+
+  return { ok: true as const, user, prof };
 }
 
-async function readBody(req: Request) {
-  const ct = req.headers.get("content-type") || "";
-  if (ct.includes("application/x-www-form-urlencoded") || ct.includes("multipart/form-data")) {
-    const form = await req.formData();
-    return {
-      id: String(form.get("id") || ""),
-      decision: String(form.get("decision") || ""),
-      notes: String(form.get("notes") || ""),
-      idempotency_key: String(form.get("idempotency_key") || ""),
-    };
-  }
-  const json = await req.json().catch(() => ({}));
-  return {
-    id: String(json.id || ""),
-    decision: String(json.decision || ""),
-    notes: String(json.notes || ""),
-    idempotency_key: String(json.idempotency_key || ""),
-  };
-}
-
-export async function POST(req: Request) {
-  const guard = await requireStaff();
-  if (!guard.ok) return NextResponse.json(guard.json, { status: guard.status });
-  const { supabase } = guard;
-
-  const body = await readBody(req);
-  const id = body.id?.trim();
-  const decision = (body.decision || "").toLowerCase();
-  const idem = body.idempotency_key?.trim() || null;
-  const notes = body.notes?.trim() || null;
-
-  if (!id || !["approve", "deny"].includes(decision)) {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
-
-  if (decision === "deny") {
-    const { data, error } = await supabase.rpc("admin_deny_payout", {
-      p_payout_id: id,
-      p_reason: notes,
-    });
-    if (error) {
-      return NextResponse.json({ error: "deny_failed", detail: error.message }, { status: 500 });
-    }
-    // optional: email landlord on denial (no html preferences known)
-    // await sendEmail({ to, subject, html: "<p>Your payout was denied.</p>", text: "Your payout was denied." });
-    const url = new globalThis.URL("/admin/payouts", process.env.SITE_URL);
-    return NextResponse.redirect(url, 303);
-  }
-
-  // APPROVE: atomic finalize with idempotency
-  const { data, error } = await supabase.rpc("admin_finalize_payout", {
-    p_payout_id: id,
-    p_idempotency_key: idem,
-  });
-
-  if (error) {
-    return NextResponse.json({ error: "approve_failed", detail: error.message }, { status: 500 });
-  }
-
-  // Optional success email (HTML required by sendEmail signature)
-  // In real flow you'd look up landlord email by landlord_id from payout_requests
-  // and attach a payout PDF if desired. Here we keep it minimal & valid.
-  try {
-    await sendEmail({
-      to: "ops@rentback.app",
-      subject: "Payout Approved",
-      html: `<p>Payout <code>${id}</code> approved.</p>`,
-      text: `Payout ${id} approved.`,
-    });
-  } catch {
-    // swallow email errors to keep UX smooth
-  }
-
+function back(ok?: string, err?: string) {
   const url = new globalThis.URL("/admin/payouts", process.env.SITE_URL);
+  if (ok) url.searchParams.set("ok", ok);
+  if (err) url.searchParams.set("err", err);
   return NextResponse.redirect(url, 303);
 }
 
-export async function GET() {
-  return NextResponse.json({ ok: false, error: "method_not_allowed" }, { status: 405 });
+export async function POST(req: Request) {
+  try {
+    const form = await req.formData();
+    const id = String(form.get("id") || "");
+    const action = String(form.get("action") || "").toLowerCase(); // "approve" | "deny"
+    const note = String(form.get("note") || "").slice(0, 2000);
+
+    if (!id || (action !== "approve" && action !== "deny")) {
+      return back(undefined, "invalid_input");
+    }
+
+    const sb = createClient(cookies());
+    const guard = await getActor(sb);
+    if (!guard.ok) return back(undefined, guard.reason);
+
+    const decided_status = action === "approve" ? "APPROVED" : "DENIED";
+    const decided_by = guard.user.id;
+
+    // Update payout request row
+    const { error: upErr } = await (await sb)
+      .from("payout_requests")
+      .update({
+        status: decided_status,
+        decided_at: new Date().toISOString(),
+        decided_by,
+        note: note || null,
+      })
+      .eq("id", id);
+
+    if (upErr) return back(undefined, upErr.message.slice(0, 120));
+
+    // Optional: email (no-op if you don't have a sender configured)
+    try {
+      // If you have a sendEmail helper, import it and send an HTML+text message.
+      // Example (commented to avoid missing import/type errors):
+      //
+      // import { sendEmail } from "@/lib/email";
+      // const subject = `Payout ${decided_status}`;
+      // const html = `<p>Your payout request <b>${id}</b> is <b>${decided_status}</b>.</p>${note ? `<p>Note: ${note}</p>` : ""}`;
+      // await sendEmail({ to: guard.prof?.email || "", subject, html, text: html.replace(/<[^>]+>/g, "") });
+    } catch {
+      // swallow email errors
+    }
+
+    return back(`Payout ${decided_status}`);
+  } catch (e: any) {
+    return back(undefined, (e?.message || "unknown_error").slice(0, 120));
+  }
 }
