@@ -1,29 +1,36 @@
 // lib/supabase/server.ts
-import { cookies } from 'next/headers';
-import { createServerClient } from '@supabase/ssr';
+import { cookies as nextCookies } from "next/headers";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
+// If you have generated types, import them. Otherwise keep Database as any.
+// import type { Database } from "@/lib/supabase/types";
+type Database = any;
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+export function createClient(cookiesStore = nextCookies()) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  }
 
-/** Use inside Server Components & Route Handlers */
-export function createServerSupabase() {
-  const cookieStore = cookies();
-
-  return createServerClient(url, anon, {
+  return createServerClient<Database>(supabaseUrl, supabaseKey, {
     cookies: {
       get(name: string) {
-        return cookieStore.get(name)?.value;
+        return cookiesStore.get(name)?.value;
       },
-      // keep types loose here; Next’s cookie store has multiple overloads
-      set(name: string, value: string, options?: any) {
-        cookieStore.set(name, value, options);
+      set(name: string, value: string, options: CookieOptions) {
+        try {
+          cookiesStore.set({ name, value, ...options });
+        } catch {
+          // noop on edge where write may be disallowed
+        }
       },
-      remove(name: string, options?: any) {
-        cookieStore.set(name, '', { ...options, maxAge: 0 });
+      remove(name: string, options: CookieOptions) {
+        try {
+          cookiesStore.set({ name, value: "", ...options, maxAge: 0 });
+        } catch {
+          // noop
+        }
       },
     },
   });
 }
-
-// Alias for route handlers (same thing)
-export const createRouteSupabase = createServerSupabase;
