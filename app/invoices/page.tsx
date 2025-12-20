@@ -12,16 +12,6 @@ import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 import RowLinkOverlay from "@/components/RowLinkOverlay";
 
-export default function RowLinkOverlay({
-  href,
-  label = "View invoice",
-}: {
-  href: string;
-  label?: string;
-}) {
-  // Absolutely-positioned link that covers the entire table row area
-  return <Link href={href} aria-label={label} className="absolute inset-0" />;
-}
 
 const PAGE_SIZE = 10;
 
