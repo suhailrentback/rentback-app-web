@@ -32,8 +32,10 @@ export default function InvoiceListMobile({ rows }: { rows: MobileInvoice[] }) {
           <li
             key={inv.id}
             className={clsx(
-              "rounded-2xl border border-black/10 dark:border-white/10 p-4",
-              "bg-white/50 dark:bg-black/20 backdrop-blur",
+              "rounded-2xl border border-black/10 dark:border-white/10 p-4 transition-shadow",
+              "bg-white/60 dark:bg-black/30 backdrop-blur",
+              "focus-within:ring-2 focus-within:ring-emerald-500",
+              "focus-within:ring-offset-2 focus-within:ring-offset-white dark:focus-within:ring-offset-black",
               isOverdue(inv.status) && "ring-1 ring-red-500/30"
             )}
           >
@@ -52,7 +54,7 @@ export default function InvoiceListMobile({ rows }: { rows: MobileInvoice[] }) {
               </div>
 
               <div className="opacity-60">Due</div>
-              <div className={clsx("text-right")}>
+              <div className="text-right">
                 {inv.due_at ? new Date(inv.due_at).toLocaleDateString() : "—"}
               </div>
 
@@ -63,13 +65,17 @@ export default function InvoiceListMobile({ rows }: { rows: MobileInvoice[] }) {
             <div className="mt-4 flex items-center justify-end gap-2">
               <Link
                 href={`/invoices/${inv.id}`}
-                className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10"
+                className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
+                           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                           focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
               >
                 View
               </Link>
               <a
                 href={`/api/receipts/${inv.id}`}
-                className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10"
+                className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
+                           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                           focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
               >
                 PDF
               </a>
