@@ -1,51 +1,90 @@
-// app/invoices/loading.tsx
-import { InvoiceCardSkeleton, InvoiceRowSkeleton, Skeleton } from "@/components/Skeleton";
-
 export default function LoadingInvoices() {
-  // Mirrors the invoices index UI to avoid layout shift
+  const rows = Array.from({ length: 8 });
+
   return (
-    <section className="p-6 space-y-6" aria-busy="true" aria-live="polite">
+    <section className="p-6 space-y-6">
+      {/* Header skeleton */}
       <div className="flex items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold">My Invoices</h1>
-        <div className="flex items-center gap-3">
-          <Skeleton className="h-9 w-40 rounded-xl" aria-label="Loading filters" />
-          <Skeleton className="h-9 w-48 rounded-xl" aria-label="Loading search" />
-          <Skeleton className="h-9 w-40 rounded-xl" aria-label="Loading sort controls" />
+        <div className="space-y-1">
+          <div className="h-3 w-16 rounded bg-black/10 dark:bg-white/10 animate-pulse" />
+          <div className="h-7 w-48 rounded bg-black/10 dark:bg-white/10 animate-pulse" />
+        </div>
+
+        <div className="hidden md:flex items-center gap-3">
+          <div className="h-8 w-28 rounded-xl border border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5 animate-pulse" />
+          <div className="h-8 w-40 rounded-xl border border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5 animate-pulse" />
+          <div className="h-8 w-32 rounded-xl border border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5 animate-pulse" />
         </div>
       </div>
 
-      {/* Mobile skeleton */}
-      <div className="md:hidden">
-        <ul className="space-y-3">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <InvoiceCardSkeleton key={i} />
-          ))}
-        </ul>
+      {/* Mobile list skeleton */}
+      <div className="md:hidden space-y-3">
+        {rows.map((_, i) => (
+          <div
+            key={`m-${i}`}
+            className="rounded-2xl border border-black/10 dark:border-white/10 p-4 animate-pulse"
+          >
+            <div className="flex items-center justify-between">
+              <div className="space-y-2">
+                <div className="h-4 w-24 rounded bg-black/10 dark:bg-white/10" />
+                <div className="h-3 w-36 rounded bg-black/10 dark:bg-white/10" />
+              </div>
+              <div className="h-6 w-20 rounded bg-black/10 dark:bg-white/10" />
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Desktop table skeleton */}
       <div className="hidden md:block overflow-x-auto rounded-2xl border border-black/10 dark:border-white/10">
         <table className="min-w-full text-sm">
-          <thead className="sticky top-0 z-10 backdrop-blur bg-white/80 dark:bg-black/40 border-b border-black/10 dark:border-white/10">
+          <thead className="bg-black/5 dark:bg-white/5">
             <tr>
-              <th className="text-left p-3 font-medium w-36">Number</th>
-              <th className="text-left p-3 font-medium w-40">Created</th>
-              <th className="text-left p-3 font-medium w-40">Due</th>
-              <th className="text-left p-3 font-medium w-32">Status</th>
-              <th className="text-right p-3 font-medium w-36">Total</th>
-              <th className="text-right p-3 font-medium w-28">Actions</th>
+              <th className="p-3">
+                <div className="h-4 w-20 rounded bg-black/10 dark:bg-white/10 animate-pulse" />
+              </th>
+              <th className="p-3">
+                <div className="h-4 w-24 rounded bg-black/10 dark:bg-white/10 animate-pulse" />
+              </th>
+              <th className="p-3">
+                <div className="h-4 w-16 rounded bg-black/10 dark:bg-white/10 animate-pulse" />
+              </th>
+              <th className="p-3">
+                <div className="h-4 w-16 rounded bg-black/10 dark:bg-white/10 animate-pulse" />
+              </th>
+              <th className="p-3 text-right">
+                <div className="ml-auto h-4 w-16 rounded bg-black/10 dark:bg-white/10 animate-pulse" />
+              </th>
+              <th className="p-3 text-right">
+                <div className="ml-auto h-4 w-16 rounded bg-black/10 dark:bg-white/10 animate-pulse" />
+              </th>
             </tr>
           </thead>
           <tbody>
-            {Array.from({ length: 8 }).map((_, i) => (
-              <InvoiceRowSkeleton key={i} />
+            {rows.map((_, i) => (
+              <tr key={i} className="border-t border-black/5 dark:border-white/10">
+                <td className="p-3">
+                  <div className="h-4 w-24 rounded bg-black/10 dark:bg-white/10 animate-pulse" />
+                </td>
+                <td className="p-3">
+                  <div className="h-4 w-28 rounded bg-black/10 dark:bg-white/10 animate-pulse" />
+                </td>
+                <td className="p-3">
+                  <div className="h-4 w-20 rounded bg-black/10 dark:bg-white/10 animate-pulse" />
+                </td>
+                <td className="p-3">
+                  <div className="h-6 w-24 rounded bg-black/10 dark:bg-white/10 animate-pulse" />
+                </td>
+                <td className="p-3">
+                  <div className="ml-auto h-4 w-20 rounded bg-black/10 dark:bg-white/10 animate-pulse" />
+                </td>
+                <td className="p-3">
+                  <div className="ml-auto h-7 w-24 rounded-xl border border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5 animate-pulse" />
+                </td>
+              </tr>
             ))}
           </tbody>
         </table>
-      </div>
-
-      <div className="flex justify-end">
-        <Skeleton className="h-9 w-64 rounded-xl" aria-label="Loading pagination" />
       </div>
     </section>
   );
