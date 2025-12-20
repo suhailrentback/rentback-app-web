@@ -3,6 +3,9 @@ import StatusBadge from "@/components/StatusBadge";
 import ReceiptButton from "@/components/ReceiptButton";
 import StatusChip from "@/components/StatusChip";
 import StatusFilters, { type StatusFilterKey } from "@/components/StatusFilters";
+import InvoiceSearch from "@/components/InvoiceSearch";
+import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
 
 
 type Invoice = {
