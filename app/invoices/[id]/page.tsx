@@ -45,17 +45,20 @@ export default async function InvoiceDetailPage({
     throw new Error("Not authenticated");
   }
 
-  const { data: inv, error } = await supabase
+  // ✅ No generics anywhere in this chain
+  const { data, error } = await supabase
     .from("invoices")
     .select("id, number, status, due_at, total, currency, created_at")
     .eq("user_id", userId)
     .eq("id", id)
-    .returns<Invoice[]>() // ✅ type the result set here
-    .maybeSingle();        // ✅ no generic here
+    .maybeSingle();
 
-  if (error || !inv) {
+  if (error || !data) {
     throw new Error(error?.message || "Invoice not found");
   }
+
+  // Cast locally (keeps the call sites generic-free)
+  const inv = data as Invoice;
 
   const amount =
     typeof inv.total === "number"
@@ -82,7 +85,7 @@ export default async function InvoiceDetailPage({
           </a>
           <Link
             href="/invoices"
-            className="rounded-xl px-3 py-1.5 border text-sm hover:bg-black/5 dark:hover:bg-white/10
+            className="rounded-xl px-3 py-1.5 border text-sm hover:bg-black/5 dark:hover:bg:white/10
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
                        focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
           >
