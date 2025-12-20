@@ -7,7 +7,6 @@ import InvoiceSearch from "@/components/InvoiceSearch";
 import Pagination from "@/components/Pagination";
 import SortControls, { type SortKey, type SortDir } from "@/components/SortControls";
 import InvoiceListMobile from "@/components/InvoiceListMobile";
-import EmptyState from "@/components/EmptyState";
 import RowLinkOverlay from "@/components/RowLinkOverlay";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
@@ -49,12 +48,6 @@ function pickQP(
   return Array.isArray(v) ? v[0] : v;
 }
 
-function parsePage(raw?: string): number {
-  const n = Number(raw ?? "1");
-  if (!Number.isFinite(n) || n < 1) return 1;
-  return Math.floor(n);
-}
-
 async function getUserSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -77,8 +70,7 @@ async function getUserSupabase() {
 }
 
 /**
- * Lightly typed filter helper that keeps the builder chainable
- * without importing PostgrestFilterBuilder types.
+ * Lightly-typed chainable filters (no Postgrest types).
  */
 function applyFilters<T extends { eq: any; in: any; ilike: any }>(
   qb: T,
@@ -159,37 +151,26 @@ export default async function InvoicesPage({
 }) {
   const filter = normalizeFilter(pickQP(searchParams, "status"));
   const q = pickQP(searchParams, "q");
-  const page = parsePage(pickQP(searchParams, "page"));
+  const page = Math.max(1, Math.floor(Number(pickQP(searchParams, "page") ?? "1"))) || 1;
   const sort = normalizeSort(pickQP(searchParams, "sort"));
   const dir = normalizeDir(pickQP(searchParams, "dir"));
 
   const { rows, totalPages } = await fetchInvoices(filter, q, page, sort, dir);
 
+  // Build stateful query string to append to per-invoice links
+  const stateQ = (() => {
+    const qp = new URLSearchParams();
+    if (filter !== "all") qp.set("status", filter);
+    if (q) qp.set("q", q);
+    if (page && page !== 1) qp.set("page", String(page));
+    if (sort !== "created_at") qp.set("sort", sort);
+    if (dir !== "desc") qp.set("dir", dir);
+    const s = qp.toString();
+    return s ? `?${s}` : "";
+  })();
+
   const ariaFor = (field: SortKey): "ascending" | "descending" | "none" =>
     sort === field ? (dir === "asc" ? "ascending" : "descending") : "none";
-
-  const emptyActions = (
-    <>
-      <Link
-        href="/invoices"
-        className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
-                 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
-                 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
-      >
-        Reset
-      </Link>
-      {q && filter !== "all" ? (
-        <Link
-          href={`/invoices?status=${filter}`}
-          className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
-                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
-                     focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
-        >
-          Clear search
-        </Link>
-      ) : null}
-    </>
-  );
 
   return (
     <section className="p-6 space-y-6">
@@ -205,13 +186,36 @@ export default async function InvoicesPage({
       {/* Mobile list */}
       <div className="md:hidden">
         {rows.length === 0 ? (
-          <EmptyState
-            title="No invoices found"
-            hint={q ? <>No results for “{q}”. Try a different number or clear the search.</> : "Try a different filter or check back later."}
-            actions={emptyActions}
-          />
+          <div className="rounded-2xl border border-black/10 dark:border:white/10 p-6">
+            <div className="font-medium">No invoices found</div>
+            <div className="text-xs opacity-70 mt-1">
+              {q ? `No results for “${q}”. Try a different number or clear the search.` : "Try a different filter or check back later."}
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              <Link
+                href="/invoices"
+                className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
+                           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                           focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
+              >
+                Reset
+              </Link>
+              {filter !== "all" ? (
+                <Link
+                  href={`/invoices?status=${filter}`}
+                  className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg:white/10
+                             focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                             focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
+                >
+                  Clear search
+                </Link>
+              ) : null}
+            </div>
+          </div>
         ) : (
-          <InvoiceListMobile rows={rows} />
+          // This component renders its own row links. Our Back button on detail will
+          // still preserve state via referrer even if the link doesn’t include params.
+          <InvoiceListMobile rows={rows as any} />
         )}
       </div>
 
@@ -227,17 +231,49 @@ export default async function InvoicesPage({
           >
             <tr>
               <th className="text-left p-3 font-medium w-36" aria-sort={ariaFor("number")}>
-                <SortHeaderShim field="number" label="Number" sort={sort} dir={dir} q={q} filter={filter} page={page} />
+                <SortControls.Header
+                  label="Number"
+                  field="number"
+                  activeSort={sort}
+                  dir={dir}
+                  status={filter === "all" ? undefined : filter}
+                  q={q}
+                  page={page}
+                />
               </th>
               <th className="text-left p-3 font-medium w-40" aria-sort={ariaFor("created_at")}>
-                <SortHeaderShim field="created_at" label="Created" sort={sort} dir={dir} q={q} filter={filter} page={page} />
+                <SortControls.Header
+                  label="Created"
+                  field="created_at"
+                  activeSort={sort}
+                  dir={dir}
+                  status={filter === "all" ? undefined : filter}
+                  q={q}
+                  page={page}
+                />
               </th>
               <th className="text-left p-3 font-medium w-40" aria-sort={ariaFor("due_at")}>
-                <SortHeaderShim field="due_at" label="Due" sort={sort} dir={dir} q={q} filter={filter} page={page} />
+                <SortControls.Header
+                  label="Due"
+                  field="due_at"
+                  activeSort={sort}
+                  dir={dir}
+                  status={filter === "all" ? undefined : filter}
+                  q={q}
+                  page={page}
+                />
               </th>
               <th className="text-left p-3 font-medium w-32">Status</th>
               <th className="text-right p-3 font-medium w-36" aria-sort={ariaFor("total")}>
-                <SortHeaderShim field="total" label="Total" sort={sort} dir={dir} q={q} filter={filter} page={page} />
+                <SortControls.Header
+                  label="Total"
+                  field="total"
+                  activeSort={sort}
+                  dir={dir}
+                  status={filter === "all" ? undefined : filter}
+                  q={q}
+                  page={page}
+                />
               </th>
               <th className="text-right p-3 font-medium w-28">Actions</th>
             </tr>
@@ -246,120 +282,101 @@ export default async function InvoicesPage({
             {rows.length === 0 ? (
               <tr>
                 <td className="p-6" colSpan={6}>
-                  <EmptyState
-                    title="No invoices found"
-                    hint={
-                      q ? (
-                        <>No results for “{q}”. Try a different number or clear the search.</>
-                      ) : (
-                        "Try a different filter or check back later."
-                      )
-                    }
-                    actions={emptyActions}
-                  />
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-medium">No invoices found</div>
+                      <div className="text-xs opacity-70">
+                        {q ? `No results for “${q}”. Try a different number or clear the search.` : "Try a different filter or check back later."}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Link
+                        href="/invoices"
+                        className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
+                                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                                   focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
+                      >
+                        Reset
+                      </Link>
+                      {filter !== "all" ? (
+                        <Link
+                          href={`/invoices?status=${filter}`}
+                          className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg:white/10
+                                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                                     focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
+                        >
+                          Clear search
+                        </Link>
+                      ) : null}
+                    </div>
+                  </div>
                 </td>
               </tr>
             ) : (
-              rows.map((inv) => (
-                <tr
-                  key={inv.id}
-                  className={clsx(
-                    "relative",
-                    "border-t border-black/5 dark:border-white/10 transition-colors",
-                    "hover:bg-black/5 dark:hover:bg-white/10",
-                    inv.status === "OVERDUE" && "bg-red-500/[0.05]"
-                  )}
-                >
-                  <td className="p-3 font-medium">{inv.number ?? "—"}</td>
-                  <td className="p-3">
-                    {inv.created_at ? new Date(inv.created_at).toLocaleDateString() : "—"}
-                  </td>
-                  <td className="p-3">{inv.due_at ? new Date(inv.due_at).toLocaleDateString() : "—"}</td>
-                  <td className="p-3">
-                    <StatusBadge status={inv.status} dueAt={inv.due_at} />
-                  </td>
-                  <td className="p-3 text-right tabular-nums">
-                    {typeof inv.total === "number"
-                      ? `${(inv.currency ?? "USD").toUpperCase()} ${(inv.total / 100).toFixed(2)}`
-                      : "—"}
-                  </td>
-                  <td className="p-3 text-right">
-                    <div className="flex items-center gap-2 justify-end">
-                      <Link
-                        href={`/invoices/${inv.id}`}
-                        className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
-                                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
-                                   focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
-                      >
-                        View
-                      </Link>
-                      <a
-                        href={`/api/receipts/${inv.id}`}
-                        className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
-                                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
-                                   focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
-                      >
-                        PDF
-                      </a>
-                    </div>
-                  </td>
-                  {/* Full-row overlay to make the row clickable */}
-                  <RowLinkOverlay href={`/invoices/${inv.id}`} />
-                </tr>
-              ))
+              rows.map((inv) => {
+                const viewHref = `/invoices/${inv.id}${stateQ}`;
+                return (
+                  <tr
+                    key={inv.id}
+                    className={clsx(
+                      "border-t border-black/5 dark:border-white/10 transition-colors",
+                      "hover:bg-black/5 dark:hover:bg-white/10",
+                      inv.status === "OVERDUE" && "bg-red-500/[0.05]"
+                    )}
+                  >
+                    <td className="p-3 font-medium relative">
+                      {inv.number ?? "—"}
+                      {/* Entire row is clickable via overlay */}
+                      <RowLinkOverlay href={viewHref} label="View invoice" />
+                    </td>
+                    <td className="p-3">
+                      {inv.created_at ? new Date(inv.created_at).toLocaleDateString() : "—"}
+                    </td>
+                    <td className="p-3">
+                      {inv.due_at ? new Date(inv.due_at).toLocaleDateString() : "—"}
+                    </td>
+                    <td className="p-3">
+                      <StatusBadge status={inv.status} dueAt={inv.due_at} />
+                    </td>
+                    <td className="p-3 text-right tabular-nums">
+                      {typeof inv.total === "number"
+                        ? `${(inv.currency ?? "USD").toUpperCase()} ${(inv.total / 100).toFixed(2)}`
+                        : "—"}
+                    </td>
+                    <td className="p-3 text-right">
+                      <div className="flex items-center gap-2 justify-end">
+                        <Link
+                          href={viewHref}
+                          className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
+                                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                                     focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
+                        >
+                          View
+                        </Link>
+                        <a
+                          href={`/api/receipts/${inv.id}`}
+                          className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
+                                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                                     focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
+                        >
+                          PDF
+                        </a>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
       </div>
 
-      <Pagination page={page} totalPages={totalPages} status={filter === "all" ? undefined : filter} q={q} />
+      <Pagination
+        page={page}
+        totalPages={totalPages}
+        status={filter === "all" ? undefined : filter}
+        q={q}
+      />
     </section>
-  );
-}
-
-/**
- * Tiny shim so we can keep SortControls as-is for query building,
- * while rendering column headers here.
- */
-function SortHeaderShim({
-  field,
-  label,
-  sort,
-  dir,
-  q,
-  filter,
-  page,
-}: {
-  field: SortKey;
-  label: string;
-  sort: SortKey;
-  dir: SortDir;
-  q?: string;
-  filter?: StatusFilterKey | "all";
-  page: number;
-}) {
-  const active = sort === field;
-  const nextDir = active && dir === "desc" ? "asc" : "desc";
-  const params = new URLSearchParams();
-  params.set("sort", field);
-  params.set("dir", nextDir);
-  params.set("page", String(page));
-  if (q) params.set("q", q);
-  if (filter && filter !== "all") params.set("status", filter);
-
-  return (
-    <Link
-      href={`/invoices?${params.toString()}`}
-      aria-current={active ? "true" : undefined}
-      className={clsx(
-        "inline-flex items-center gap-1 rounded-xl px-2 py-1",
-        "hover:bg-black/5 dark:hover:bg-white/10 focus-visible:outline-none",
-        "focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2",
-        "focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
-      )}
-    >
-      <span>{label}</span>
-      <span className="text-[10px] opacity-60">{active ? (dir === "asc" ? "▲" : "▼") : "↕︎"}</span>
-    </Link>
   );
 }
