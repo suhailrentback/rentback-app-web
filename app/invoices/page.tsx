@@ -193,14 +193,18 @@ export default async function InvoicesPage({
             <div className="mt-3 flex items-center gap-2">
               <Link
                 href="/invoices"
-                className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10"
+                className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
+                           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                           focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
               >
                 Reset
               </Link>
               {filter !== "all" ? (
                 <Link
                   href={`/invoices?status=${filter}`}
-                  className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10"
+                  className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
+                             focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                             focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
                 >
                   Clear search
                 </Link>
@@ -215,7 +219,13 @@ export default async function InvoicesPage({
       {/* Desktop table */}
       <div className="hidden md:block overflow-x-auto rounded-2xl border border-black/10 dark:border-white/10">
         <table className="min-w-full text-sm">
-          <thead className="bg-black/5 dark:bg-white/5">
+          <thead
+            className={clsx(
+              "sticky top-0 z-10 backdrop-blur",
+              "bg-white/80 dark:bg-black/40",
+              "border-b border-black/10 dark:border-white/10"
+            )}
+          >
             <tr>
               <th className="text-left p-3 font-medium w-36" aria-sort={ariaFor("number")}>
                 <SortHeader
@@ -281,14 +291,18 @@ export default async function InvoicesPage({
                     <div className="flex items-center gap-2">
                       <Link
                         href="/invoices"
-                        className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10"
+                        className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
+                                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                                   focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
                       >
                         Reset
                       </Link>
                       {filter !== "all" ? (
                         <Link
                           href={`/invoices?status=${filter}`}
-                          className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10"
+                          className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
+                                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                                     focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
                         >
                           Clear search
                         </Link>
@@ -302,7 +316,8 @@ export default async function InvoicesPage({
                 <tr
                   key={inv.id}
                   className={clsx(
-                    "border-t border-black/5 dark:border-white/10",
+                    "border-t border-black/5 dark:border-white/10 transition-colors",
+                    "hover:bg-black/5 dark:hover:bg-white/10",
                     overdueRowClass(inv.status, inv.due_at)
                   )}
                 >
@@ -313,9 +328,7 @@ export default async function InvoicesPage({
                       : "—"}
                   </td>
                   <td className="p-3">
-                    {inv.due_at
-                      ? new Date(inv.due_at).toLocaleDateString()
-                      : "—"}
+                    {inv.due_at ? new Date(inv.due_at).toLocaleDateString() : "—"}
                   </td>
                   <td className="p-3">
                     <StatusBadge status={inv.status} dueAt={inv.due_at} />
@@ -331,13 +344,17 @@ export default async function InvoicesPage({
                     <div className="flex items-center gap-2 justify-end">
                       <Link
                         href={`/invoices/${inv.id}`}
-                        className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10"
+                        className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg:white/10
+                                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                                   focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
                       >
                         View
                       </Link>
                       <a
                         href={`/api/receipts/${inv.id}`}
-                        className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10"
+                        className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
+                                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                                   focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
                       >
                         PDF
                       </a>
