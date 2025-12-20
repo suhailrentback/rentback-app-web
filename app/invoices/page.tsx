@@ -8,6 +8,7 @@ import Pagination from "@/components/Pagination";
 import SortControls, { type SortKey, type SortDir } from "@/components/SortControls";
 import InvoiceListMobile from "@/components/InvoiceListMobile";
 import RowLinkOverlay from "@/components/RowLinkOverlay";
+import EmptyState from "@/components/EmptyState";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 
@@ -69,9 +70,7 @@ async function getUserSupabase() {
   return { supabase, userId };
 }
 
-/**
- * Lightly-typed chainable filters (no Postgrest types).
- */
+/** Lightly-typed chainable filters (no Postgrest types). */
 function applyFilters<T extends { eq: any; in: any; ilike: any }>(
   qb: T,
   userId: string,
@@ -172,6 +171,25 @@ export default async function InvoicesPage({
   const ariaFor = (field: SortKey): "ascending" | "descending" | "none" =>
     sort === field ? (dir === "asc" ? "ascending" : "descending") : "none";
 
+  // Empty-state microcopy + actions
+  const emptyTitle =
+    q || filter !== "all" ? "No invoices found" : "No invoices yet";
+  const emptyHint = q
+    ? `No results for “${q}”. Try a different number or clear the search.`
+    : filter !== "all"
+    ? "No invoices in this filter yet. Try another filter or reset."
+    : "When your landlord issues an invoice, it will appear here.";
+
+  const emptyActions: { href: string; label: string }[] = [{ href: "/invoices", label: "Reset" }];
+  if (q) {
+    emptyActions.push({
+      href: filter !== "all" ? `/invoices?status=${filter}` : "/invoices",
+      label: "Clear search",
+    });
+  } else if (filter !== "all") {
+    emptyActions.push({ href: "/invoices", label: "Clear filter" });
+  }
+
   return (
     <section className="p-6 space-y-6">
       <div className="flex items-center justify-between gap-4">
@@ -186,35 +204,9 @@ export default async function InvoicesPage({
       {/* Mobile list */}
       <div className="md:hidden">
         {rows.length === 0 ? (
-          <div className="rounded-2xl border border-black/10 dark:border:white/10 p-6">
-            <div className="font-medium">No invoices found</div>
-            <div className="text-xs opacity-70 mt-1">
-              {q ? `No results for “${q}”. Try a different number or clear the search.` : "Try a different filter or check back later."}
-            </div>
-            <div className="mt-3 flex items-center gap-2">
-              <Link
-                href="/invoices"
-                className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
-                           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
-                           focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
-              >
-                Reset
-              </Link>
-              {filter !== "all" ? (
-                <Link
-                  href={`/invoices?status=${filter}`}
-                  className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg:white/10
-                             focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
-                             focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
-                >
-                  Clear search
-                </Link>
-              ) : null}
-            </div>
-          </div>
+          <EmptyState title={emptyTitle} hint={emptyHint} actions={emptyActions} />
         ) : (
-          // This component renders its own row links. Our Back button on detail will
-          // still preserve state via referrer even if the link doesn’t include params.
+          // Mobile list renders its own items; "Back" from detail will still work via referrer.
           <InvoiceListMobile rows={rows as any} />
         )}
       </div>
@@ -282,34 +274,7 @@ export default async function InvoicesPage({
             {rows.length === 0 ? (
               <tr>
                 <td className="p-6" colSpan={6}>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="font-medium">No invoices found</div>
-                      <div className="text-xs opacity-70">
-                        {q ? `No results for “${q}”. Try a different number or clear the search.` : "Try a different filter or check back later."}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Link
-                        href="/invoices"
-                        className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
-                                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
-                                   focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
-                      >
-                        Reset
-                      </Link>
-                      {filter !== "all" ? (
-                        <Link
-                          href={`/invoices?status=${filter}`}
-                          className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg:white/10
-                                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
-                                     focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
-                        >
-                          Clear search
-                        </Link>
-                      ) : null}
-                    </div>
-                  </div>
+                  <EmptyState title={emptyTitle} hint={emptyHint} actions={emptyActions} className="border-0 p-0" />
                 </td>
               </tr>
             ) : (
@@ -326,7 +291,6 @@ export default async function InvoicesPage({
                   >
                     <td className="p-3 font-medium relative">
                       {inv.number ?? "—"}
-                      {/* Entire row is clickable via overlay */}
                       <RowLinkOverlay href={viewHref} label="View invoice" />
                     </td>
                     <td className="p-3">
