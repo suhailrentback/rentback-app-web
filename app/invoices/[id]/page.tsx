@@ -1,4 +1,5 @@
 // app/invoices/[id]/page.tsx
+// (Same as your Step-2 file, except the "Actions" section now links to /api/receipts/[id])
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -29,8 +30,6 @@ type PageProps = { params: { id: string } };
 
 export default async function InvoiceDetailPage({ params }: PageProps) {
   const id = params.id;
-
-  // DEMO mode: show stub data unless NEXT_PUBLIC_DEMO === "false"
   const demo =
     (process.env.NEXT_PUBLIC_DEMO ?? "true").toLowerCase() !== "false";
 
@@ -41,7 +40,6 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
     invoice = demoInvoices().find((r) => r.id === id) ?? null;
     if (invoice) items = demoItemsFor(invoice);
   } else {
-    // Non-demo placeholder to keep builds green until DB is wired.
     invoice = null;
     items = [];
   }
@@ -67,12 +65,11 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
     );
   }
 
-  // Totals
   const subTotal = items.reduce((s, it) => s + it.total_cents, 0);
-  const taxCents = 0; // demo
+  const taxCents = 0;
   const grandTotal = invoice.total_cents;
   const outstanding =
-    invoice.status === "PAID" ? 0 : Math.max(0, grandTotal); // demo-friendly
+    invoice.status === "PAID" ? 0 : Math.max(0, grandTotal);
 
   return (
     <section className="p-6 space-y-6">
@@ -99,7 +96,7 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
         </div>
       </header>
 
-      {/* Amounts card */}
+      {/* Amounts */}
       <div className="grid md:grid-cols-3 gap-4">
         <div className="rounded-2xl border p-4">
           <div className="text-xs opacity-70">Total</div>
@@ -169,7 +166,7 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
                 Tax
               </td>
               <td className="p-3 text-right">
-                {fmtMoney(taxCents, invoice.currency)}
+                {fmtMoney(0, invoice.currency)}
               </td>
             </tr>
             <tr className="border-t border-black/5 dark:border-white/10">
@@ -186,21 +183,22 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
 
       {/* Actions */}
       <div className="flex flex-wrap gap-3">
-        <button
-          disabled={invoice.status !== "PAID"}
-          title={
-            invoice.status === "PAID"
-              ? "Receipt downloadable (hooked up in Step 3)"
-              : "Available after payment"
-          }
-          className={`rounded-xl px-3 py-2 border text-sm ${
-            invoice.status !== "PAID"
-              ? "opacity-50 cursor-not-allowed"
-              : "hover:bg-black/5 dark:hover:bg-white/10"
-          }`}
-        >
-          Download receipt (PDF)
-        </button>
+        {invoice.status === "PAID" ? (
+          <a
+            href={`/api/receipts/${invoice.id}`}
+            className="rounded-xl px-3 py-2 border text-sm hover:bg-black/5 dark:hover:bg-white/10"
+          >
+            Download receipt (PDF)
+          </a>
+        ) : (
+          <button
+            disabled
+            title="Available after payment"
+            className="rounded-xl px-3 py-2 border text-sm opacity-50 cursor-not-allowed"
+          >
+            Download receipt (PDF)
+          </button>
+        )}
 
         <button
           disabled
@@ -214,7 +212,7 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
   );
 }
 
-/** Demo data & helpers */
+/** Demo data & helpers (same as Step 2) */
 
 function demoInvoices(): InvoiceRow[] {
   const now = Date.now();
@@ -225,7 +223,7 @@ function demoInvoices(): InvoiceRow[] {
     title: `Monthly Rent #${i}`,
     issued_at: days(dIssue),
     due_date: days(dDue),
-    total_cents: 85000 * 100, // 85,000 PKR
+    total_cents: 85000 * 100,
     currency: "PKR",
     status,
     landlord_name: "ABC Properties",
@@ -245,11 +243,10 @@ function demoInvoices(): InvoiceRow[] {
 }
 
 function demoItemsFor(inv: InvoiceRow): InvoiceItem[] {
-  // Make items sum to inv.total_cents
   const rent = 80000 * 100;
   const maintenance = 5000 * 100;
   const sum = rent + maintenance;
-  const diff = Math.max(0, inv.total_cents - sum); // padding line to match total
+  const diff = Math.max(0, inv.total_cents - sum);
   const items: InvoiceItem[] = [
     { id: `${inv.id}_1`, description: "Monthly Rent", qty: 1, unit_cents: rent, total_cents: rent },
     { id: `${inv.id}_2`, description: "Maintenance / Services", qty: 1, unit_cents: maintenance, total_cents: maintenance },
@@ -280,7 +277,6 @@ function StatusBadge(s: InvoiceStatus) {
       return <span className={`${base} border-slate-400`}>Draft</span>;
   }
 }
-
 function fmtDate(iso: string) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
