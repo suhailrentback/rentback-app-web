@@ -1,4 +1,5 @@
 import Link from "next/link";
+import StatusBadge from "@/components/StatusBadge";
 import ReceiptButton from "@/components/ReceiptButton";
 import StatusChip from "@/components/StatusChip";
 
