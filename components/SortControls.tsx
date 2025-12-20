@@ -1,81 +1,92 @@
 // components/SortControls.tsx
 "use client";
 
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useTransition } from "react";
+import Link from "next/link";
+import clsx from "clsx";
 
 export type SortKey = "created_at" | "due_at" | "number" | "total";
 export type SortDir = "asc" | "desc";
 export type StatusFilterKey = "all" | "unpaid" | "overdue" | "paid";
 
-type Props = {
+type ToolbarProps = {
   sort: SortKey;
   dir: SortDir;
   status?: StatusFilterKey;
   q?: string;
-  page: number; // provided by caller; we always reset to 1 on change
+  page: number;
 };
 
-/**
- * Compact sort controls that update the URL (deep-linkable) and preserve filters/search.
- * - Resets page to 1 on any change
- * - Keeps `status` and `q`
- */
-export default function SortControls({ sort, dir, status, q }: Props) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const sp = useSearchParams();
-  const [isPending, startTransition] = useTransition();
+type HeaderProps = {
+  label: string;
+  field: SortKey;
+  activeSort: SortKey;
+  dir: SortDir;
+  status?: StatusFilterKey;
+  q?: string;
+  page: number;
+};
 
-  function push(updates: Partial<{ sort: SortKey; dir: SortDir }>) {
-    const params = new URLSearchParams(sp?.toString() ?? "");
-    if (status && status !== "all") params.set("status", status);
-    else params.delete("status");
+function makeHref(params: {
+  sort?: SortKey;
+  dir?: SortDir;
+  status?: StatusFilterKey;
+  q?: string;
+  page?: number;
+}) {
+  const url = new URL("/invoices", typeof window === "undefined" ? "http://localhost" : window.location.origin);
+  if (params.sort) url.searchParams.set("sort", params.sort);
+  if (params.dir) url.searchParams.set("dir", params.dir);
+  if (params.status && params.status !== "all") url.searchParams.set("status", params.status);
+  if (params.q) url.searchParams.set("q", params.q);
+  url.searchParams.set("page", String(params.page ?? 1));
+  return url.pathname + "?" + url.searchParams.toString();
+}
 
-    if (q) params.set("q", q);
-    else params.delete("q");
-
-    if (updates.sort) params.set("sort", updates.sort);
-    if (updates.dir) params.set("dir", updates.dir);
-
-    params.set("page", "1");
-
-    startTransition(() => {
-      router.push(`${pathname}?${params.toString()}`);
-    });
-  }
+export default function SortControls({ sort, dir, status, q, page }: ToolbarProps) {
+  const toggled = dir === "asc" ? "desc" : "asc";
+  const href = makeHref({ sort, dir: toggled, status, q, page });
 
   return (
-    <div className="flex items-center gap-2">
-      <label htmlFor="sort-field" className="sr-only">
-        Sort field
-      </label>
-      <select
-        id="sort-field"
-        defaultValue={sort}
-        onChange={(e) => push({ sort: e.target.value as SortKey })}
-        disabled={isPending}
-        className="rounded-xl border border-black/10 dark:border-white/10 bg-transparent px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
+    <div className="hidden md:flex items-center gap-2">
+      <Link
+        href={href}
+        className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
+                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                   focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
+        aria-label={`Toggle sort direction (${toggled})`}
       >
-        <option value="created_at">Created</option>
-        <option value="due_at">Due</option>
-        <option value="number">Number</option>
-        <option value="total">Total</option>
-      </select>
-
-      <label htmlFor="sort-dir" className="sr-only">
-        Sort direction
-      </label>
-      <select
-        id="sort-dir"
-        defaultValue={dir}
-        onChange={(e) => push({ dir: e.target.value as SortDir })}
-        disabled={isPending}
-        className="rounded-xl border border-black/10 dark:border-white/10 bg-transparent px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
-      >
-        <option value="desc">Desc</option>
-        <option value="asc">Asc</option>
-      </select>
+        {dir === "asc" ? "Asc ↑" : "Desc ↓"}
+      </Link>
     </div>
+  );
+}
+
+export function SortHeader({
+  label,
+  field,
+  activeSort,
+  dir,
+  status,
+  q,
+  page,
+}: HeaderProps) {
+  const isActive = activeSort === field;
+  const nextDir: SortDir = isActive ? (dir === "asc" ? "desc" : "asc") : "desc";
+  const href = makeHref({ sort: field, dir: nextDir, status, q, page });
+
+  return (
+    <Link
+      href={href}
+      className={clsx(
+        "inline-flex items-center gap-1 rounded-lg px-2 py-1 -mx-2",
+        "hover:bg-black/5 dark:hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+      )}
+      aria-label={`Sort by ${label} ${isActive ? `(now ${dir}, next ${nextDir})` : ""}`}
+    >
+      <span>{label}</span>
+      <span className="text-[10px] opacity-60">
+        {isActive ? (dir === "asc" ? "↑" : "↓") : "↕"}
+      </span>
+    </Link>
   );
 }
