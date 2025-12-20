@@ -1,9 +1,6 @@
 // components/Pagination.tsx
-"use client";
-
 import Link from "next/link";
-import { useMemo } from "react";
-import { usePathname, useSearchParams } from "next/navigation";
+import clsx from "clsx";
 import type { StatusFilterKey } from "@/components/StatusFilters";
 
 type Props = {
@@ -13,104 +10,126 @@ type Props = {
   q?: string;
 };
 
-function pageRange(curr: number, total: number): (number | "...")[] {
-  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
-  const out: (number | "...")[] = [];
-  const add = (n: number | "...") => out.push(n);
+type PageItem = number | "...";
 
-  const windowLeft = Math.max(2, curr - 1);
-  const windowRight = Math.min(total - 1, curr + 1);
+function buildPages(page: number, totalPages: number): PageItem[] {
+  if (totalPages <= 1) return [1];
 
-  add(1);
-  if (windowLeft > 2) add("...");
-  for (let n = windowLeft; n <= windowRight; n++) add(n);
-  if (windowRight < total - 1) add("...");
-  add(total);
+  const delta = 1; // neighbors each side of the current page
+  const range: number[] = [];
+  const result: PageItem[] = [];
 
-  return Array.from(new Set(out)).filter(Boolean) as (number | "...");
+  const left = Math.max(1, page - delta);
+  const right = Math.min(totalPages, page + delta);
+
+  for (let i = 1; i <= totalPages; i++) {
+    if (i === 1 || i === totalPages || (i >= left && i <= right)) {
+      range.push(i);
+    }
+  }
+
+  let prev = 0;
+  for (const i of range) {
+    if (prev) {
+      if (i - prev === 2) result.push(prev + 1);
+      else if (i - prev > 2) result.push("...");
+    }
+    result.push(i);
+    prev = i;
+  }
+
+  return result;
+}
+
+function hrefFor(p: number, status?: StatusFilterKey, q?: string) {
+  const params = new URLSearchParams();
+  params.set("page", String(p));
+  if (status && status !== "all") params.set("status", status);
+  if (q && q.trim()) params.set("q", q.trim());
+  return `/invoices?${params.toString()}`;
 }
 
 export default function Pagination({ page, totalPages, status, q }: Props) {
-  const pathname = usePathname();
-  const sp = useSearchParams();
+  if (!Number.isFinite(page) || page < 1) page = 1;
+  if (!Number.isFinite(totalPages) || totalPages < 1) totalPages = 1;
+  const items = buildPages(page, totalPages);
 
-  const baseParams = useMemo(() => {
-    const params = new URLSearchParams(sp?.toString() ?? "");
-    // Preserve sort & dir already in URL; allow props to override status/q if provided.
-    if (status !== undefined) {
-      if (status) params.set("status", status);
-      else params.delete("status");
-    }
-    if (q !== undefined) {
-      if (q) params.set("q", q);
-      else params.delete("q");
-    }
-    return params;
-  }, [sp, status, q]);
+  if (totalPages <= 1) return null;
 
-  const items = pageRange(page, totalPages);
-
-  const makeHref = (p: number) => {
-    const params = new URLSearchParams(baseParams.toString());
-    params.set("page", String(p));
-    return `${pathname}?${params.toString()}`;
-  };
-
-  const prevHref = makeHref(Math.max(1, page - 1));
-  const nextHref = makeHref(Math.min(totalPages, page + 1));
+  const prevDisabled = page <= 1;
+  const nextDisabled = page >= totalPages;
 
   return (
-    <nav
-      className="flex items-center justify-end gap-2"
-      aria-label="Invoices pagination"
-    >
-      <Link
-        href={prevHref}
-        aria-label="Previous page"
-        aria-disabled={page <= 1}
-        className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
-                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
-                   focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black
-                   disabled:opacity-50"
-      >
-        Prev
-      </Link>
+    <nav className="flex items-center justify-between mt-4" aria-label="Pagination">
+      {/* Prev */}
+      <div>
+        {prevDisabled ? (
+          <span className="rounded-xl px-3 py-1.5 border text-xs opacity-50 cursor-not-allowed select-none">
+            Prev
+          </span>
+        ) : (
+          <Link
+            href={hrefFor(page - 1, status, q)}
+            className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
+                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                       focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
+          >
+            Prev
+          </Link>
+        )}
+      </div>
 
+      {/* Pages */}
       <ul className="flex items-center gap-1" role="list">
-        {items.map((it, i) =>
+        {items.map((it, idx) =>
           it === "..." ? (
-            <li key={`ellipsis-${i}`} aria-hidden className="px-2 text-xs opacity-70">
+            <li key={`ellipsis-${idx}`} className="px-2 text-xs opacity-60 select-none">
               …
             </li>
           ) : (
             <li key={it}>
-              <Link
-                href={makeHref(it)}
-                aria-current={it === page ? "page" : undefined}
-                className={`rounded-xl px-3 py-1.5 border text-xs focus-visible:outline-none
-                            focus-visible:ring-2 focus-visible:ring-emerald-500
-                            focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black
-                            hover:bg-black/5 dark:hover:bg-white/10
-                            ${it === page ? "bg-black/5 dark:bg-white/10 font-medium" : ""}`}
-              >
-                {it}
-              </Link>
+              {it === page ? (
+                <span
+                  aria-current="page"
+                  className={clsx(
+                    "rounded-xl px-3 py-1.5 text-xs border",
+                    "bg-black/5 dark:bg-white/10 font-medium"
+                  )}
+                >
+                  {it}
+                </span>
+              ) : (
+                <Link
+                  href={hrefFor(it, status, q)}
+                  className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
+                             focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                             focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
+                >
+                  {it}
+                </Link>
+              )}
             </li>
           )
         )}
       </ul>
 
-      <Link
-        href={nextHref}
-        aria-label="Next page"
-        aria-disabled={page >= totalPages}
-        className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
-                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
-                   focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black
-                   disabled:opacity-50"
-      >
-        Next
-      </Link>
+      {/* Next */}
+      <div>
+        {nextDisabled ? (
+          <span className="rounded-xl px-3 py-1.5 border text-xs opacity-50 cursor-not-allowed select-none">
+            Next
+          </span>
+        ) : (
+          <Link
+            href={hrefFor(page + 1, status, q)}
+            className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg:white/10
+                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                       focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
+          >
+            Next
+          </Link>
+        )}
+      </div>
     </nav>
   );
 }
