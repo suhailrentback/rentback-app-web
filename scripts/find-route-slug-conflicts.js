@@ -1,86 +1,75 @@
-// scripts/find-route-slug-conflicts.js
+// scans ./app for dynamic folder names and reports mismatches on identical paths
 const fs = require("fs");
 const path = require("path");
 
-const appDir = path.join(process.cwd(), "app");
+const ROOT = path.join(process.cwd(), "app");
 
 function walk(dir, acc = []) {
-  if (!fs.existsSync(dir)) return acc;
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      acc.push(full);
-      walk(full, acc);
-    }
+  for (const name of fs.readdirSync(dir)) {
+    const p = path.join(dir, name);
+    const stat = fs.statSync(p);
+    if (stat.isDirectory()) walk(p, acc);
+    else if (name === "page.tsx" || name === "route.ts") acc.push(p);
   }
   return acc;
 }
 
-function stripRouteGroup(seg) {
-  // remove (group) segments from the URL
-  return seg.replace(/^\((.*)\)$/, "");
-}
-function isDynamic(seg) {
-  return /^\[.*\]$/.test(seg);
-}
-function dynamicName(seg) {
-  // handles [id], [...slug], [[...slug]]
-  const m = seg.match(/^\[+\.{0,3}(.+?)\]+$/);
-  return m ? m[1] : null;
-}
-
-const dirs = walk(appDir);
-const routeDirs = dirs.filter((d) =>
-  ["page.tsx", "page.jsx", "route.ts", "route.js"].some((f) =>
-    fs.existsSync(path.join(d, f))
-  )
-);
-
-const entries = [];
-for (const d of routeDirs) {
-  const relParts = path.relative(appDir, d).split(path.sep).filter(Boolean);
-  const visibleSegs = relParts.map(stripRouteGroup).filter(Boolean);
-  const shapeSegs = visibleSegs.map((s) => (isDynamic(s) ? "[]" : s));
-  const names = visibleSegs.filter(isDynamic).map(dynamicName);
-  const shapeKey = "/" + shapeSegs.join("/");
-  entries.push({
-    rel: relParts.join("/"),
-    visiblePath: "/" + visibleSegs.join("/"),
-    shapeKey,
-    names,
+function normalizeAppPath(absFile) {
+  // strip root and filename
+  let rel = absFile.replace(ROOT, "").replace(/\/(page|route)\.tsx?$/, "");
+  // drop route groups: /(marketing)/ -> /
+  rel = rel.replace(/\/\([^/]+\)/g, "");
+  // split into segments, track dynamic names in order
+  const segs = rel.split("/").filter(Boolean);
+  const dynNames = [];
+  const normSegs = segs.map(s => {
+    const m = s.match(/^\[([^\]]+)\]$/);
+    if (m) { dynNames.push(m[1]); return "[]"; }
+    return s;
   });
+  return { key: normSegs.join("/"), dynNames, file: absFile };
 }
 
-// group by shapeKey (same visible path shape)
-const byShape = new Map();
-for (const e of entries) {
-  const arr = byShape.get(e.shapeKey) || [];
-  arr.push(e);
-  byShape.set(e.shapeKey, arr);
-}
-
-let conflict = false;
-for (const [shape, arr] of byShape.entries()) {
-  // same path shape but different param name signatures => conflict
-  const sigs = new Map();
-  for (const e of arr) {
-    const sig = JSON.stringify(e.names);
-    if (!sigs.has(sig)) sigs.set(sig, []);
-    sigs.get(sig).push(e);
+function main() {
+  if (!fs.existsSync(ROOT)) {
+    console.log("No app/ directory found.");
+    process.exit(0);
   }
-  if (sigs.size > 1) {
-    conflict = true;
-    console.log("⚠️  Slug-name conflict for path shape:", shape);
-    for (const [sig, list] of sigs.entries()) {
-      console.log("   Param names:", sig);
-      list.forEach((x) =>
-        console.log("   •", x.visiblePath, "(folder: app/" + x.rel + ")")
-      );
+  const files = walk(ROOT);
+  const buckets = new Map(); // key|index -> Set of names
+  const samples = new Map(); // key -> array of {file, dynNames}
+
+  for (const f of files) {
+    const { key, dynNames, file } = normalizeAppPath(f);
+    if (!samples.has(key)) samples.set(key, []);
+    samples.get(key).push({ file, dynNames });
+    dynNames.forEach((name, idx) => {
+      const k = `${key}|${idx}`;
+      if (!buckets.has(k)) buckets.set(k, new Set());
+      buckets.get(k).add(name);
+    });
+  }
+
+  let found = false;
+  for (const [k, set] of buckets.entries()) {
+    if (set.size > 1) {
+      found = true;
+      const [key, idx] = k.split("|");
+      console.log("\n⚠️  Conflict on path:", `/${key}`);
+      console.log("   Dynamic segment index:", idx);
+      console.log("   Different names:", Array.from(set).join(", "));
+      console.log("   Files:");
+      for (const s of samples.get(key) || []) {
+        console.log("   -", s.file.replace(process.cwd()+"/", ""), "params:", s.dynNames.join("/"));
+      }
     }
-    console.log();
+  }
+
+  if (found) {
+    console.error("\n❌ Fix by renaming the dynamic folders so the names match for the same path.");
+    process.exit(1);
+  } else {
+    console.log("✅ No slug conflicts detected.");
   }
 }
-
-if (!conflict) {
-  console.log("✅ No dynamic slug-name conflicts found.");
-}
+main();
