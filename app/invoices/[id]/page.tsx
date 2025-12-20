@@ -1,4 +1,6 @@
 import { notFound } from "next/navigation";
+import StatusBadge from "@/components/StatusBadge";
+
 
 /** ---- Types ---- */
 type LineItem = {
