@@ -75,13 +75,17 @@ async function getUserSupabase() {
   return { supabase, userId };
 }
 
-function applyFilters<T extends import("@supabase/supabase-js").PostgrestFilterBuilder<any, any, any>>(
+/**
+ * Lightly typed filter helper that keeps your builder chainable
+ * without depending on PostgrestFilterBuilder types.
+ */
+function applyFilters<T extends { eq: any; in: any; ilike: any }>(
   qb: T,
   userId: string,
   filter: StatusFilterKey,
   q?: string
-) {
-  let query = qb.eq("user_id", userId);
+): T {
+  let query = (qb as any).eq("user_id", userId);
 
   switch (filter) {
     case "paid":
@@ -101,7 +105,7 @@ function applyFilters<T extends import("@supabase/supabase-js").PostgrestFilterB
   if (q && q.trim()) {
     query = query.ilike("number", `%${q.trim()}%`);
   }
-  return query;
+  return query as T;
 }
 
 async function fetchInvoices(
@@ -183,7 +187,7 @@ export default async function InvoicesPage({
       {/* Mobile list */}
       <div className="md:hidden">
         {rows.length === 0 ? (
-          <div className="rounded-2xl border border-black/10 dark:border-white/10 p-6">
+          <div className="rounded-2xl border border-black/10 dark:border:white/10 p-6">
             <div className="font-medium">No invoices found</div>
             <div className="text-xs opacity-70 mt-1">
               {q
@@ -203,7 +207,7 @@ export default async function InvoicesPage({
                 <Link
                   href={`/invoices?status=${filter}`}
                   className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
-                             focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                             focus-visible:outline:none focus-visible:ring-2 focus-visible:ring-emerald-500
                              focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
                 >
                   Clear search
@@ -300,7 +304,7 @@ export default async function InvoicesPage({
                       {filter !== "all" ? (
                         <Link
                           href={`/invoices?status=${filter}`}
-                          className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg:white/10
+                          className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
                                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
                                      focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
                         >
