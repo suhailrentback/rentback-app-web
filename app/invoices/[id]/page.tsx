@@ -1,7 +1,8 @@
-// app/invoices/[id]/page.tsx
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
+import clsx from "clsx";
 import StatusBadge from "@/components/StatusBadge";
 
 type Invoice = {
@@ -35,57 +36,52 @@ async function getUserSupabase() {
   return { supabase, userId };
 }
 
-export default async function InvoiceDetailPage({
-  params: { id },
-}: {
-  params: { id: string };
-}) {
+export default async function InvoicePage({ params }: { params: { id: string } }) {
   const { supabase, userId } = await getUserSupabase();
-  if (!supabase || !userId) {
-    throw new Error("Not authenticated");
-  }
+  if (!supabase || !userId) notFound();
 
-  // ✅ No generics anywhere in this chain
-  const { data, error } = await supabase
+  // Load this user's invoice
+  const { data: inv, error } = await supabase
     .from("invoices")
     .select("id, number, status, due_at, total, currency, created_at")
     .eq("user_id", userId)
-    .eq("id", id)
+    .eq("id", params.id)
     .maybeSingle();
 
-  if (error || !data) {
-    throw new Error(error?.message || "Invoice not found");
+  if (error || !inv) {
+    notFound();
   }
 
-  // Cast locally (keeps the call sites generic-free)
-  const inv = data as Invoice;
-
-  const amount =
-    typeof inv.total === "number"
-      ? `${(inv.currency ?? "USD").toUpperCase()} ${(inv.total / 100).toFixed(2)}`
-      : "—";
+  const currency = (inv.currency ?? "USD").toUpperCase();
+  const totalFmt =
+    typeof inv.total === "number" ? `${currency} ${(inv.total / 100).toFixed(2)}` : "—";
+  const createdFmt = inv.created_at ? new Date(inv.created_at).toLocaleString() : "—";
+  const dueFmt = inv.due_at ? new Date(inv.due_at).toLocaleDateString() : "—";
 
   return (
     <section className="p-6 space-y-6">
+      {/* Header + Actions */}
       <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Invoice {inv.number ?? "—"}</h1>
-          <div className="text-sm opacity-70">
-            {inv.created_at ? new Date(inv.created_at).toLocaleString() : "—"}
-          </div>
+        <div className="space-y-1">
+          <div className="text-xs opacity-70">Invoice</div>
+          <h1 className="text-2xl font-semibold">
+            {inv.number ? `Invoice ${inv.number}` : "Invoice"}
+          </h1>
         </div>
+
         <div className="flex items-center gap-2">
           <a
             href={`/api/receipts/${inv.id}`}
-            className="rounded-xl px-3 py-1.5 border text-sm hover:bg-black/5 dark:hover:bg-white/10
+            className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
                        focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
           >
-            PDF
+            Download PDF
           </a>
+
           <Link
             href="/invoices"
-            className="rounded-xl px-3 py-1.5 border text-sm hover:bg-black/5 dark:hover:bg:white/10
+            className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
                        focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
           >
@@ -94,8 +90,9 @@ export default async function InvoiceDetailPage({
         </div>
       </div>
 
+      {/* Summary Card */}
       <div className="rounded-2xl border border-black/10 dark:border-white/10 p-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
             <div className="text-xs opacity-70">Status</div>
             <div className="mt-1">
@@ -103,19 +100,24 @@ export default async function InvoiceDetailPage({
             </div>
           </div>
           <div>
+            <div className="text-xs opacity-70">Created</div>
+            <div className="mt-1 text-sm">{createdFmt}</div>
+          </div>
+          <div>
             <div className="text-xs opacity-70">Due</div>
-            <div className="mt-1">
-              {inv.due_at ? new Date(inv.due_at).toLocaleDateString() : "—"}
-            </div>
+            <div className={clsx("mt-1 text-sm")}>{dueFmt}</div>
           </div>
-          <div>
+          <div className="text-right md:text-left">
             <div className="text-xs opacity-70">Total</div>
-            <div className="mt-1">{amount}</div>
+            <div className="mt-1 font-medium">{totalFmt}</div>
           </div>
-          <div>
-            <div className="text-xs opacity-70">Invoice ID</div>
-            <div className="mt-1">{inv.id}</div>
-          </div>
+        </div>
+      </div>
+
+      {/* Placeholder details (line items can come later) */}
+      <div className="rounded-2xl border border-black/10 dark:border-white/10 p-6">
+        <div className="text-sm opacity-70">
+          Line items & payment history will appear here in a later step.
         </div>
       </div>
     </section>
