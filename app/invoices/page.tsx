@@ -1,7 +1,7 @@
 // app/invoices/page.tsx
 import Link from "next/link";
 import clsx from "clsx";
-import StatusBadge, { overdueRowClass } from "@/components/StatusBadge";
+import StatusBadge from "@/components/StatusBadge";
 import StatusFilters, { type StatusFilterKey } from "@/components/StatusFilters";
 import InvoiceSearch from "@/components/InvoiceSearch";
 import Pagination from "@/components/Pagination";
@@ -300,7 +300,7 @@ export default async function InvoicesPage({
                       {filter !== "all" ? (
                         <Link
                           href={`/invoices?status=${filter}`}
-                          className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
+                          className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg:white/10
                                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
                                      focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
                         >
@@ -318,7 +318,7 @@ export default async function InvoicesPage({
                   className={clsx(
                     "border-t border-black/5 dark:border-white/10 transition-colors",
                     "hover:bg-black/5 dark:hover:bg-white/10",
-                    overdueRowClass(inv.status, inv.due_at)
+                    inv.status === "OVERDUE" && "bg-red-500/[0.05]"
                   )}
                 >
                   <td className="p-3 font-medium">{inv.number ?? "—"}</td>
@@ -344,7 +344,7 @@ export default async function InvoicesPage({
                     <div className="flex items-center gap-2 justify-end">
                       <Link
                         href={`/invoices/${inv.id}`}
-                        className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg:white/10
+                        className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
                                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
                                    focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
                       >
