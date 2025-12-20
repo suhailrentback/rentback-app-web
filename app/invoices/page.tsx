@@ -5,6 +5,7 @@ import StatusChip from "@/components/StatusChip";
 import StatusFilters, { type StatusFilterKey } from "@/components/StatusFilters";
 import InvoiceSearch from "@/components/InvoiceSearch";
 import { cookies } from "next/headers";
+import Pagination from "@/components/Pagination";
 import { createServerClient } from "@supabase/ssr";
 
 
