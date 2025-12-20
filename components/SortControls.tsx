@@ -1,77 +1,81 @@
 // components/SortControls.tsx
-import Link from "next/link";
+"use client";
+
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useTransition } from "react";
 
 export type SortKey = "created_at" | "due_at" | "number" | "total";
 export type SortDir = "asc" | "desc";
+export type StatusFilterKey = "all" | "unpaid" | "overdue" | "paid";
 
-export default function SortControls(props: {
+type Props = {
   sort: SortKey;
   dir: SortDir;
-  status?: string; // keep current filter
-  q?: string;      // keep current search
-  page?: number;   // keep current page
-}) {
-  const { sort, dir, status, q, page } = props;
+  status?: StatusFilterKey;
+  q?: string;
+  page: number; // provided by caller; we always reset to 1 on change
+};
 
-  function hrefFor(next: Partial<{ sort: SortKey; dir: SortDir }>) {
-    const qs = new URLSearchParams();
-    const s = next.sort ?? sort;
-    const d = next.dir ?? dir;
+/**
+ * Compact sort controls that update the URL (deep-linkable) and preserve filters/search.
+ * - Resets page to 1 on any change
+ * - Keeps `status` and `q`
+ */
+export default function SortControls({ sort, dir, status, q }: Props) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const sp = useSearchParams();
+  const [isPending, startTransition] = useTransition();
 
-    if (status && status !== "all") qs.set("status", status);
-    if (q) qs.set("q", q);
-    if (page && page > 1) qs.set("page", String(page));
+  function push(updates: Partial<{ sort: SortKey; dir: SortDir }>) {
+    const params = new URLSearchParams(sp?.toString() ?? "");
+    if (status && status !== "all") params.set("status", status);
+    else params.delete("status");
 
-    qs.set("sort", s);
-    qs.set("dir", d);
+    if (q) params.set("q", q);
+    else params.delete("q");
 
-    return `/invoices?${qs.toString()}`;
+    if (updates.sort) params.set("sort", updates.sort);
+    if (updates.dir) params.set("dir", updates.dir);
+
+    params.set("page", "1");
+
+    startTransition(() => {
+      router.push(`${pathname}?${params.toString()}`);
+    });
   }
-
-  const chip =
-    "rounded-xl px-3 py-1.5 text-sm border border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/10";
-  const chipActive =
-    chip + " bg-black/10 dark:bg-white/10 font-medium";
-
-  const sorts: { key: SortKey; label: string }[] = [
-    { key: "created_at", label: "Created" },
-    { key: "due_at", label: "Due" },
-    { key: "number", label: "Number" },
-    { key: "total", label: "Amount" },
-  ];
 
   return (
     <div className="flex items-center gap-2">
-      <div className="text-xs opacity-70">Sort</div>
-      <div className="flex items-center gap-1">
-        {sorts.map((s) => (
-          <Link
-            key={s.key}
-            href={hrefFor({ sort: s.key })}
-            className={s.key === sort ? chipActive : chip}
-            aria-current={s.key === sort ? "true" : undefined}
-          >
-            {s.label}
-          </Link>
-        ))}
-      </div>
+      <label htmlFor="sort-field" className="sr-only">
+        Sort field
+      </label>
+      <select
+        id="sort-field"
+        defaultValue={sort}
+        onChange={(e) => push({ sort: e.target.value as SortKey })}
+        disabled={isPending}
+        className="rounded-xl border border-black/10 dark:border-white/10 bg-transparent px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
+      >
+        <option value="created_at">Created</option>
+        <option value="due_at">Due</option>
+        <option value="number">Number</option>
+        <option value="total">Total</option>
+      </select>
 
-      <div className="ml-2 flex items-center gap-1">
-        <Link
-          href={hrefFor({ dir: "asc" })}
-          className={dir === "asc" ? chipActive : chip}
-          aria-current={dir === "asc" ? "true" : undefined}
-        >
-          ↑ Asc
-        </Link>
-        <Link
-          href={hrefFor({ dir: "desc" })}
-          className={dir === "desc" ? chipActive : chip}
-          aria-current={dir === "desc" ? "true" : undefined}
-        >
-          ↓ Desc
-        </Link>
-      </div>
+      <label htmlFor="sort-dir" className="sr-only">
+        Sort direction
+      </label>
+      <select
+        id="sort-dir"
+        defaultValue={dir}
+        onChange={(e) => push({ dir: e.target.value as SortDir })}
+        disabled={isPending}
+        className="rounded-xl border border-black/10 dark:border-white/10 bg-transparent px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
+      >
+        <option value="desc">Desc</option>
+        <option value="asc">Asc</option>
+      </select>
     </div>
   );
 }
