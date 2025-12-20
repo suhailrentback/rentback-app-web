@@ -2,6 +2,8 @@ import Link from "next/link";
 import StatusBadge from "@/components/StatusBadge";
 import ReceiptButton from "@/components/ReceiptButton";
 import StatusChip from "@/components/StatusChip";
+import StatusFilters, { type StatusFilterKey } from "@/components/StatusFilters";
+
 
 type Invoice = {
   id: string;
