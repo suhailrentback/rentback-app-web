@@ -6,6 +6,7 @@ import StatusFilters, { type StatusFilterKey } from "@/components/StatusFilters"
 import InvoiceSearch from "@/components/InvoiceSearch";
 import { cookies } from "next/headers";
 import Pagination from "@/components/Pagination";
+import SortControls, { type SortKey, type SortDir } from "@/components/SortControls";
 import { createServerClient } from "@supabase/ssr";
 
 
