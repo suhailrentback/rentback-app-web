@@ -1,15 +1,14 @@
-// app/invoices/page.tsx
 import Link from "next/link";
 import clsx from "clsx";
-import InvoiceListMobile from "@/components/InvoiceListMobile";
-import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
 import StatusBadge from "@/components/StatusBadge";
 import StatusFilters, { type StatusFilterKey } from "@/components/StatusFilters";
 import InvoiceSearch from "@/components/InvoiceSearch";
 import Pagination from "@/components/Pagination";
-import SortControls, { SortHeader, type SortKey, type SortDir } from "@/components/SortControls";
+import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
+import InvoiceListMobile from "@/components/InvoiceListMobile";
 import RowLinkOverlay from "@/components/RowLinkOverlay";
+import { getLangServer, isRTL, t, type Lang } from "@/lib/i18n";
 
 const PAGE_SIZE = 10;
 
@@ -28,6 +27,9 @@ function normalizeFilter(val: string | null | undefined): StatusFilterKey {
   if (!val) return "all";
   return (allowed.includes(val as StatusFilterKey) ? val : "all") as StatusFilterKey;
 }
+
+type SortKey = "created_at" | "due_at" | "number" | "total";
+type SortDir = "asc" | "desc";
 
 function normalizeSort(val: string | null | undefined): SortKey {
   const allowed: SortKey[] = ["created_at", "due_at", "number", "total"];
@@ -57,7 +59,7 @@ function parsePage(raw?: string): number {
 async function getUserSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !anon) return { supabase: null as any, userId: null as string | null };
+  if (!url || !anon) return { supabase: null, userId: null as string | null };
 
   const cookieStore = cookies();
   const supabase = createServerClient(url, anon, {
@@ -75,7 +77,7 @@ async function getUserSupabase() {
   return { supabase, userId };
 }
 
-/** Keep the query builder chainable without heavy generics */
+/** Lightly-typed filter helper */
 function applyFilters<T extends { eq: any; in: any; ilike: any }>(
   qb: T,
   userId: string,
@@ -153,6 +155,9 @@ export default async function InvoicesPage({
 }: {
   searchParams?: Record<string, string | string[] | undefined>;
 }) {
+  const lang: Lang = getLangServer();
+  const rtl = isRTL(lang);
+
   const filter = normalizeFilter(pickQP(searchParams, "status"));
   const q = pickQP(searchParams, "q");
   const page = parsePage(pickQP(searchParams, "page"));
@@ -165,13 +170,12 @@ export default async function InvoicesPage({
     sort === field ? (dir === "asc" ? "ascending" : "descending") : "none";
 
   return (
-    <section className="p-6 space-y-6">
+    <section className="p-6 space-y-6" dir={rtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold">My Invoices</h1>
+        <h1 className="text-2xl font-semibold">{t(lang, "invoices_title")}</h1>
         <div className="flex items-center gap-3">
           <StatusFilters />
           <InvoiceSearch q={q} status={filter === "all" ? undefined : filter} />
-          <SortControls sort={sort} dir={dir} status={filter === "all" ? undefined : filter} q={q} page={page} />
         </div>
       </div>
 
@@ -179,11 +183,9 @@ export default async function InvoicesPage({
       <div className="md:hidden">
         {rows.length === 0 ? (
           <div className="rounded-2xl border border-black/10 dark:border:white/10 p-6">
-            <div className="font-medium">No invoices found</div>
+            <div className="font-medium">{t(lang, "no_invoices_title")}</div>
             <div className="text-xs opacity-70 mt-1">
-              {q
-                ? `No results for “${q}”. Try a different number or clear the search.`
-                : "Try a different filter or check back later."}
+              {q ? t(lang, "no_invoices_for_q", q) : t(lang, "no_invoices_subtle")}
             </div>
             <div className="mt-3 flex items-center gap-2">
               <Link
@@ -192,7 +194,7 @@ export default async function InvoicesPage({
                            focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
                            focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
               >
-                Reset
+                {t(lang, "reset")}
               </Link>
               {filter !== "all" ? (
                 <Link
@@ -201,13 +203,13 @@ export default async function InvoicesPage({
                              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
                              focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
                 >
-                  Clear search
+                  {t(lang, "clear_search")}
                 </Link>
               ) : null}
             </div>
           </div>
         ) : (
-          <InvoiceListMobile rows={rows} />
+          <InvoiceListMobile rows={rows} lang={lang} />
         )}
       </div>
 
@@ -223,51 +225,19 @@ export default async function InvoicesPage({
           >
             <tr>
               <th className="text-left p-3 font-medium w-36" aria-sort={ariaFor("number")}>
-                <SortHeader
-                  label="Number"
-                  field="number"
-                  activeSort={sort}
-                  dir={dir}
-                  status={filter === "all" ? undefined : filter}
-                  q={q}
-                  page={page}
-                />
+                {t(lang, "table_number")}
               </th>
               <th className="text-left p-3 font-medium w-40" aria-sort={ariaFor("created_at")}>
-                <SortHeader
-                  label="Created"
-                  field="created_at"
-                  activeSort={sort}
-                  dir={dir}
-                  status={filter === "all" ? undefined : filter}
-                  q={q}
-                  page={page}
-                />
+                {t(lang, "table_created")}
               </th>
               <th className="text-left p-3 font-medium w-40" aria-sort={ariaFor("due_at")}>
-                <SortHeader
-                  label="Due"
-                  field="due_at"
-                  activeSort={sort}
-                  dir={dir}
-                  status={filter === "all" ? undefined : filter}
-                  q={q}
-                  page={page}
-                />
+                {t(lang, "table_due")}
               </th>
-              <th className="text-left p-3 font-medium w-32">Status</th>
+              <th className="text-left p-3 font-medium w-32">{t(lang, "table_status")}</th>
               <th className="text-right p-3 font-medium w-36" aria-sort={ariaFor("total")}>
-                <SortHeader
-                  label="Total"
-                  field="total"
-                  activeSort={sort}
-                  dir={dir}
-                  status={filter === "all" ? undefined : filter}
-                  q={q}
-                  page={page}
-                />
+                {t(lang, "table_total")}
               </th>
-              <th className="text-right p-3 font-medium w-28">Actions</th>
+              <th className="text-right p-3 font-medium w-28">{t(lang, "table_actions")}</th>
             </tr>
           </thead>
           <tbody>
@@ -276,11 +246,9 @@ export default async function InvoicesPage({
                 <td className="p-6" colSpan={6}>
                   <div className="flex items-center justify-between">
                     <div>
-                      <div className="font-medium">No invoices found</div>
+                      <div className="font-medium">{t(lang, "no_invoices_title")}</div>
                       <div className="text-xs opacity-70">
-                        {q
-                          ? `No results for “${q}”. Try a different number or clear the search.`
-                          : "Try a different filter or check back later."}
+                        {q ? t(lang, "no_invoices_for_q", q) : t(lang, "no_invoices_subtle")}
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -290,7 +258,7 @@ export default async function InvoicesPage({
                                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
                                    focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
                       >
-                        Reset
+                        {t(lang, "reset")}
                       </Link>
                       {filter !== "all" ? (
                         <Link
@@ -299,7 +267,7 @@ export default async function InvoicesPage({
                                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
                                      focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
                         >
-                          Clear search
+                          {t(lang, "clear_search")}
                         </Link>
                       ) : null}
                     </div>
@@ -311,13 +279,18 @@ export default async function InvoicesPage({
                 <tr
                   key={inv.id}
                   className={clsx(
-                    "relative",
                     "border-t border-black/5 dark:border-white/10 transition-colors",
                     "hover:bg-black/5 dark:hover:bg-white/10",
                     inv.status === "OVERDUE" && "bg-red-500/[0.05]"
                   )}
                 >
-                  <td className="p-3 font-medium">{inv.number ?? "—"}</td>
+                  <td className="p-3 font-medium relative">
+                    {inv.number ?? "—"}
+                    <RowLinkOverlay
+                      href={`/invoices/${inv.id}`}
+                      label={t(lang, "open_invoice", inv.number ?? inv.id)}
+                    />
+                  </td>
                   <td className="p-3">
                     {inv.created_at ? new Date(inv.created_at).toLocaleDateString() : "—"}
                   </td>
@@ -325,7 +298,7 @@ export default async function InvoicesPage({
                     {inv.due_at ? new Date(inv.due_at).toLocaleDateString() : "—"}
                   </td>
                   <td className="p-3">
-                    <StatusBadge status={inv.status} dueAt={inv.due_at} />
+                    <StatusBadge status={inv.status} dueAt={inv.due_at} lang={lang} />
                   </td>
                   <td className="p-3 text-right tabular-nums">
                     {typeof inv.total === "number"
@@ -336,11 +309,11 @@ export default async function InvoicesPage({
                     <div className="flex items-center gap-2 justify-end">
                       <Link
                         href={`/invoices/${inv.id}`}
-                        className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10
+                        className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg:white/10
                                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
                                    focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
                       >
-                        View
+                        {t(lang, "view")}
                       </Link>
                       <a
                         href={`/api/receipts/${inv.id}`}
@@ -348,10 +321,9 @@ export default async function InvoicesPage({
                                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
                                    focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
                       >
-                        PDF
+                        {t(lang, "pdf")}
                       </a>
                     </div>
-                    <RowLinkOverlay href={`/invoices/${inv.id}`} label="View invoice" />
                   </td>
                 </tr>
               ))
@@ -360,7 +332,7 @@ export default async function InvoicesPage({
         </table>
       </div>
 
-      <Pagination page={page} totalPages={totalPages} status={filter === "all" ? undefined : filter} q={q} />
+      <Pagination page={page} totalPages={totalPages} status={filter === "all" ? undefined : filter} q={q} lang={lang} />
     </section>
   );
 }
