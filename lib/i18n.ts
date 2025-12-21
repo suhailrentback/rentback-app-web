@@ -1,101 +1,36 @@
-import { cookies } from "next/headers";
+// lib/i18n.ts
+// Client-safe i18n helpers — do NOT import `next/headers` here.
 
-/** Public cookie keys used across the app */
 export const LANG_COOKIE = "rb_lang";
 export const THEME_COOKIE = "rb_theme";
 
 export type Lang = "en" | "ur";
-export type Theme = "light" | "dark" | "system";
+export type Theme = "light" | "dark";
 
-const dict = {
+export const MESSAGES: Record<Lang, Record<string, string>> = {
   en: {
-    invoices_title: "My Invoices",
-    table_number: "Number",
-    table_created: "Created",
-    table_due: "Due",
-    table_status: "Status",
-    table_total: "Total",
-    table_actions: "Actions",
-
-    no_invoices_title: "No invoices found",
-    no_invoices_subtle: "Try a different filter or search query.",
-    no_invoices_for_q: (q: string) =>
-      `No results for “${q}”. Try a different number or clear the search.`,
-
-    reset: "Reset",
-    clear_search: "Clear search",
-    view: "View",
-    pdf: "PDF",
-    prev: "Prev",
-    next: "Next",
-    open_invoice: (id: string) => `View invoice ${id}`,
-    created_label: "Created",
-    due_label: "Due",
-
-    status_DRAFT: "DRAFT",
-    status_ISSUED: "ISSUED",
-    status_PAID: "PAID",
-    status_OVERDUE: "OVERDUE",
+    status_DRAFT: "Draft",
+    status_ISSUED: "Issued",
+    status_PAID: "Paid",
+    status_OVERDUE: "Overdue",
   },
   ur: {
-    invoices_title: "میری رسیدیں",
-    table_number: "نمبر",
-    table_created: "تاریخِ تخلیق",
-    table_due: "ادائیگی کی آخری تاریخ",
-    table_status: "حالت",
-    table_total: "کل",
-    table_actions: "اعمال",
-
-    no_invoices_title: "کوئی رسید نہیں ملی",
-    no_invoices_subtle: "کوئی دوسرا فلٹر یا تلاش آزمائیں۔",
-    no_invoices_for_q: (q: string) =>
-      `“${q}” کے لئے کوئی نتیجہ نہیں۔ کوئی دوسرا نمبر آزمائیں یا تلاش صاف کریں۔`,
-
-    reset: "ری سیٹ",
-    clear_search: "تلاش صاف کریں",
-    view: "دیکھیں",
-    pdf: "PDF",
-    prev: "پچھلا",
-    next: "اگلا",
-    open_invoice: (id: string) => `انوائس دیکھیں ${id}`,
-    created_label: "تخلیق",
-    due_label: "آخری تاریخ",
-
-    status_DRAFT: "مسودہ",
+    status_DRAFT: "ڈرافٹ",
     status_ISSUED: "جاری",
-    status_PAID: "اداشدہ",
-    status_OVERDUE: "زائد المیعاد",
+    status_PAID: "ادا",
+    status_OVERDUE: "تاخیر",
   },
-} satisfies Record<Lang, any>;
+};
 
-export function t(lang: Lang, key: keyof typeof dict["en"], ...args: any[]): string {
-  const val = (dict[lang] as any)[key];
-  if (typeof val === "function") return val(...args);
-  return val ?? (dict.en as any)[key] ?? (key as string);
+export function t(lang: Lang | undefined, key: string, fallback?: string) {
+  const L: Lang = lang === "ur" ? "ur" : "en";
+  return (MESSAGES[L] as any)?.[key] ?? fallback ?? key;
 }
 
-export function isRTL(lang: Lang) {
-  return lang === "ur";
+export function normalizeLang(v: string | null | undefined): Lang {
+  return v === "ur" ? "ur" : "en";
 }
 
-/** Server-only: read language from cookies. Fallback to 'en'. */
-export function getLangServer(): Lang {
-  try {
-    const c = cookies();
-    const v = c.get(LANG_COOKIE)?.value ?? c.get("lang")?.value ?? "en";
-    return (v === "ur" ? "ur" : "en") as Lang;
-  } catch {
-    return "en";
-  }
-}
-
-/** Server-only: read theme from cookies. Fallback to 'light'. */
-export function getThemeServer(): Theme {
-  try {
-    const c = cookies();
-    const v = c.get(THEME_COOKIE)?.value ?? "light";
-    return (v === "dark" || v === "system") ? v : "light";
-  } catch {
-    return "light";
-  }
+export function normalizeTheme(v: string | null | undefined): Theme {
+  return v === "dark" ? "dark" : "light";
 }
