@@ -1,55 +1,61 @@
-// app/invoices/error.tsx
-"use client";
+'use client';
 
-import Link from "next/link";
+import Link from 'next/link';
 
-export default function InvoicesError({
-  error,
-  reset,
-}: {
+export default function Error(props: {
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const { error, reset } = props;
+
+  // Safe log for debugging; not shown to users
+  if (typeof window !== 'undefined') {
+    // eslint-disable-next-line no-console
+    console.error('Invoices route error:', error);
+  }
+
   return (
     <section className="p-6">
-      <div className="rounded-2xl border border-rose-300/60 dark:border-rose-700/50 bg-rose-50 dark:bg-rose-900/20 p-6">
-        <h2 className="text-lg font-semibold">Something went wrong</h2>
-        <p className="text-sm opacity-80 mt-1">
-          {error.message || "We couldn’t load your invoices."}
-        </p>
+      <div className="rounded-2xl border border-black/10 dark:border-white/10 p-6 space-y-3">
+        <div className="space-y-1">
+          <div className="text-xs opacity-70">Invoices</div>
+          <h1 className="text-2xl font-semibold">Something went wrong</h1>
+          <p className="text-sm opacity-80">
+            We couldn’t load your invoices. This can happen if the network is
+            flaky or your session expired.
+          </p>
+          {error?.digest ? (
+            <div className="text-xs opacity-50">Error ID: {error.digest}</div>
+          ) : null}
+        </div>
 
-        <div className="mt-4 flex items-center gap-2">
+        <div className="pt-2 flex flex-wrap gap-2">
           <button
-            onClick={reset}
-            className="rounded-xl px-3 py-1.5 border text-sm hover:bg-black/5 dark:hover:bg-white/10
-                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
-                       focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
-            aria-label="Try loading invoices again"
+            type="button"
+            onClick={() => reset()}
+            className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
           >
             Try again
           </button>
           <Link
             href="/invoices"
-            className="rounded-xl px-3 py-1.5 border text-sm hover:bg-black/5 dark:hover:bg-white/10
-                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
-                       focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
-            aria-label="Reset filters and search"
+            className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
           >
             Reset filters
           </Link>
           <Link
             href="/"
-            className="rounded-xl px-3 py-1.5 border text-sm hover:bg-black/5 dark:hover:bg-white/10
-                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
-                       focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
+            className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
           >
-            Home
+            Go home
           </Link>
+          <a
+            href="mailto:help@rentback.app?subject=Invoices%20error"
+            className="rounded-xl px-3 py-1.5 border text-xs hover:bg-black/5 dark:hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
+          >
+            Contact support
+          </a>
         </div>
-
-        {process.env.NODE_ENV !== "production" && error.digest ? (
-          <p className="text-[11px] opacity-60 mt-3">Digest: {error.digest}</p>
-        ) : null}
       </div>
     </section>
   );
