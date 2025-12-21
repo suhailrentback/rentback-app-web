@@ -19,7 +19,6 @@ export default function ErrorCard({
   useEffect(() => {
     if (error) console.error(error);
   }, [error]);
-
   return (
     <div className="rounded-2xl border border-black/10 dark:border-white/10 p-6 space-y-4">
       <div className="space-y-1">
@@ -28,7 +27,6 @@ export default function ErrorCard({
           {message ?? 'This view failed to load. You can try again.'}
         </p>
       </div>
-
       <div className="flex gap-2">
         {onRetry && (
           <button
@@ -40,7 +38,6 @@ export default function ErrorCard({
             Try again
           </button>
         )}
-
         <Link
           href={homeHref}
           className="rounded-xl px-3 py-1.5 border text-sm hover:bg-black/5 dark:hover:bg-white/10
