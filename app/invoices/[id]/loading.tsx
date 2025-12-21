@@ -1,35 +1,45 @@
-export default function LoadingInvoiceDetail() {
+import Skeleton from "@/components/Skeleton";
+
+export default function InvoiceDetailLoading() {
   return (
     <section className="p-6 space-y-6">
-      {/* Header + Actions skeleton */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="space-y-1">
-          <div className="h-3 w-16 rounded bg-black/10 dark:bg-white/10 animate-pulse" />
-          <div className="h-7 w-56 rounded bg-black/10 dark:bg-white/10 animate-pulse" />
-        </div>
+      <div className="flex items-center justify-between">
+        <Skeleton className="h-7 w-48" />
         <div className="flex items-center gap-2">
-          <div className="h-8 w-32 rounded-xl border border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5 animate-pulse" />
-          <div className="h-8 w-20 rounded-xl border border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5 animate-pulse" />
+          <Skeleton className="h-9 w-24" />
+          <Skeleton className="h-9 w-28" />
         </div>
       </div>
 
-      {/* Summary Card skeleton */}
-      <div className="rounded-2xl border border-black/10 dark:border-white/10 p-6 animate-pulse">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {[1, 2, 3, 4].map((k) => (
-            <div key={k}>
-              <div className="h-3 w-14 rounded bg-black/10 dark:bg-white/10" />
-              <div className="mt-2 h-6 w-32 rounded bg-black/10 dark:bg-white/10" />
+      <div className="rounded-2xl border border-black/10 dark:border-white/10 p-6 space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="space-y-2">
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="h-5 w-40" />
+          </div>
+          <div className="space-y-2">
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="h-5 w-28" />
+          </div>
+          <div className="space-y-2">
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="h-5 w-20" />
+          </div>
+        </div>
+
+        <div className="border-t border-black/10 dark:border-white/10 pt-4 space-y-3">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="flex items-center justify-between">
+              <Skeleton className="h-4 w-52" />
+              <Skeleton className="h-4 w-24" />
             </div>
           ))}
         </div>
-      </div>
 
-      {/* Details block skeleton */}
-      <div className="rounded-2xl border border-black/10 dark:border-white/10 p-6 space-y-3 animate-pulse">
-        <div className="h-4 w-48 rounded bg-black/10 dark:bg-white/10" />
-        <div className="h-4 w-80 rounded bg-black/10 dark:bg-white/10" />
-        <div className="h-4 w-64 rounded bg-black/10 dark:bg-white/10" />
+        <div className="flex items-center justify-end gap-3 pt-4">
+          <Skeleton className="h-9 w-28" />
+          <Skeleton className="h-9 w-36" />
+        </div>
       </div>
     </section>
   );
