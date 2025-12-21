@@ -1,5 +1,4 @@
 'use client';
-
 import ErrorCard from '@/components/ErrorCard';
 
 export default function InvoicesError({
