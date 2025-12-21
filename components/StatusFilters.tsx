@@ -1,55 +1,61 @@
-// components/StatusFilters.tsx
-"use client";
+'use client';
 
-import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import clsx from 'clsx';
 
-export type StatusFilterKey = "all" | "unpaid" | "overdue" | "paid";
+export type StatusFilterKey = 'all' | 'unpaid' | 'overdue' | 'paid';
 
-const OPTIONS: { key: StatusFilterKey; label: string }[] = [
-  { key: "all", label: "All" },
-  { key: "unpaid", label: "Unpaid" },
-  { key: "overdue", label: "Overdue" },
-  { key: "paid", label: "Paid" },
-];
-
-export default function StatusFilters() {
-  const pathname = usePathname();
+export default function StatusFilters({
+  value,
+}: {
+  value?: StatusFilterKey;
+}) {
   const sp = useSearchParams();
-  const active = (sp?.get("status") as StatusFilterKey) ?? "all";
+  const q = sp.get('q') ?? undefined;
+  const sort = sp.get('sort') ?? undefined;
+  const dir = sp.get('dir') ?? undefined;
+  const page = sp.get('page') ?? undefined;
 
-  const makeHref = (key: StatusFilterKey) => {
-    const params = new URLSearchParams(sp?.toString() ?? "");
-    // When changing filter, reset to page 1
-    params.set("page", "1");
+  const items: { key: StatusFilterKey; label: string }[] = [
+    { key: 'all', label: 'All' },
+    { key: 'unpaid', label: 'Unpaid' },
+    { key: 'overdue', label: 'Overdue' },
+    { key: 'paid', label: 'Paid' },
+  ];
 
-    if (key === "all") params.delete("status");
-    else params.set("status", key);
+  const build = (key: StatusFilterKey) => {
+    const params = new URLSearchParams();
+    if (key !== 'all') params.set('status', key);
+    if (q) params.set('q', q);
+    if (sort) params.set('sort', sort);
+    if (dir) params.set('dir', dir);
+    if (page) params.set('page', page);
+    const qs = params.toString();
+    return '/invoices' + (qs ? `?${qs}` : '');
+    };
 
-    return `${pathname}?${params.toString()}`;
-  };
+  const current = value ?? ((sp.get('status') as StatusFilterKey) || 'all');
 
   return (
-    <div role="tablist" aria-label="Filter invoices by status" className="flex items-center gap-2">
-      {OPTIONS.map((opt) => {
-        const selected = opt.key === active;
-        return (
-          <Link
-            key={opt.key}
-            href={makeHref(opt.key)}
-            role="tab"
-            aria-selected={selected}
-            aria-current={selected ? "page" : undefined}
-            className={`rounded-xl px-3 py-1.5 border text-xs focus-visible:outline-none
-                        focus-visible:ring-2 focus-visible:ring-emerald-500
-                        focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black
-                        hover:bg-black/5 dark:hover:bg-white/10
-                        ${selected ? "bg-black/5 dark:bg-white/10 font-medium" : ""}`}
-          >
-            {opt.label}
-          </Link>
-        );
-      })}
+    <div className="flex items-center gap-2">
+      {items.map(it => (
+        <Link
+          key={it.key}
+          href={build(it.key)}
+          className={clsx(
+            'rounded-xl px-3 py-1.5 border text-xs',
+            'hover:bg-black/5 dark:hover:bg-white/10',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500',
+            'focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black',
+            current === it.key
+              ? 'bg-black/5 dark:bg-white/10'
+              : 'bg-transparent'
+          )}
+        >
+          {it.label}
+        </Link>
+      ))}
     </div>
   );
 }
