@@ -1,6 +1,11 @@
 import { cookies } from "next/headers";
 
+/** Public cookie keys used across the app */
+export const LANG_COOKIE = "rb_lang";
+export const THEME_COOKIE = "rb_theme";
+
 export type Lang = "en" | "ur";
+export type Theme = "light" | "dark" | "system";
 
 const dict = {
   en: {
@@ -66,7 +71,7 @@ const dict = {
 export function t(lang: Lang, key: keyof typeof dict["en"], ...args: any[]): string {
   const val = (dict[lang] as any)[key];
   if (typeof val === "function") return val(...args);
-  return val ?? (dict.en as any)[key] ?? key;
+  return val ?? (dict.en as any)[key] ?? (key as string);
 }
 
 export function isRTL(lang: Lang) {
@@ -77,9 +82,20 @@ export function isRTL(lang: Lang) {
 export function getLangServer(): Lang {
   try {
     const c = cookies();
-    const v = c.get("rb_lang")?.value ?? c.get("lang")?.value ?? "en";
+    const v = c.get(LANG_COOKIE)?.value ?? c.get("lang")?.value ?? "en";
     return (v === "ur" ? "ur" : "en") as Lang;
   } catch {
     return "en";
+  }
+}
+
+/** Server-only: read theme from cookies. Fallback to 'light'. */
+export function getThemeServer(): Theme {
+  try {
+    const c = cookies();
+    const v = c.get(THEME_COOKIE)?.value ?? "light";
+    return (v === "dark" || v === "system") ? v : "light";
+  } catch {
+    return "light";
   }
 }
