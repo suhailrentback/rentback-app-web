@@ -1,7 +1,12 @@
 import { createInvoice } from '@/app/actions/invoices';
 import Link from 'next/link';
 
-export default function NewInvoicePage() {
+export default function NewInvoicePage({
+  searchParams,
+}: {
+  searchParams?: Record<string, string | string[] | undefined>;
+}) {
+  const error = (searchParams?.error as string) || '';
   return (
     <section className="p-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -13,6 +18,12 @@ export default function NewInvoicePage() {
           Back to Invoices
         </Link>
       </div>
+
+      {error ? (
+        <div className="rounded-xl border border-rose-300/60 dark:border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm">
+          {error}
+        </div>
+      ) : null}
 
       <form action={createInvoice} className="space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -49,7 +60,7 @@ export default function NewInvoicePage() {
                 <input
                   type="text"
                   name={`item${i}_desc`}
-                  placeholder="e.g., December Rent"
+                  placeholder="e.g., Monthly Rent"
                   className="mt-1 w-full rounded-xl border px-3 py-2 bg-transparent"
                 />
               </label>
@@ -75,7 +86,7 @@ export default function NewInvoicePage() {
             </div>
           ))}
           <div className="text-xs opacity-70">
-            Totals will auto-calc in cents (qty × unit price). You can add up to 3 items now.
+            Totals auto-calc (qty × unit price). Add up to 3 items.
           </div>
         </div>
 
@@ -86,7 +97,6 @@ export default function NewInvoicePage() {
           >
             Save Draft
           </button>
-          <span className="text-xs opacity-60">Draft will open right after save.</span>
         </div>
       </form>
     </section>
