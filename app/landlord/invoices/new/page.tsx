@@ -29,7 +29,7 @@ async function getSupabaseForServer() {
 }
 
 /** Server action that creates a draft or issues an invoice */
-export async function createInvoiceAction(formData: FormData) {
+async function createInvoiceAction(formData: FormData) {
   "use server";
 
   const { supabase, userId, error } = await getSupabaseForServer();
