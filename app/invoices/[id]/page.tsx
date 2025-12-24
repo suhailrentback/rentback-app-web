@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 import StatusBadge from "@/components/StatusBadge";
 import IssueInvoiceButton from "@/components/IssueInvoiceButton";
+import MarkPaidButton from "@/components/MarkPaidButton";
 
 type PageParams = { params: { id: string } };
 
@@ -40,7 +41,6 @@ export default async function InvoiceDetailPage({ params }: PageParams) {
   const { data: auth } = await supabase.auth.getUser();
   const userId = auth.user?.id ?? null;
 
-  // Load invoice
   const { data: inv, error } = await supabase
     .from("invoices")
     .select(
@@ -60,7 +60,6 @@ export default async function InvoiceDetailPage({ params }: PageParams) {
     );
   }
 
-  // Viewer checks (basic): allow both tenant (user_id) and landlord to view
   const viewerIsOwner = userId && (userId === inv.user_id || userId === inv.landlord_id);
   if (!viewerIsOwner) {
     return (
@@ -74,6 +73,8 @@ export default async function InvoiceDetailPage({ params }: PageParams) {
   }
 
   const canIssue = userId === inv.landlord_id && inv.status === "DRAFT";
+  const canMarkPaid =
+    userId === inv.landlord_id && (inv.status === "ISSUED" || inv.status === "OVERDUE");
 
   return (
     <section className="p-6 space-y-6">
@@ -82,12 +83,21 @@ export default async function InvoiceDetailPage({ params }: PageParams) {
           Invoice {inv.number ? `#${inv.number}` : "—"}
         </h1>
         <div className="flex items-center gap-3">
-          {canIssue ? (
-            <IssueInvoiceButton invoiceId={inv.id} />
+          {canIssue ? <IssueInvoiceButton invoiceId={inv.id} /> : null}
+          {canMarkPaid ? <MarkPaidButton invoiceId={inv.id} /> : null}
+          {inv.status === "PAID" ? (
+            <a
+              href={`/api/receipts/${inv.id}`}
+              className="rounded-xl px-3 py-1.5 border text-sm hover:bg-black/5 dark:hover:bg-white/10
+                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                         focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
+            >
+              PDF
+            </a>
           ) : null}
           <Link
             href="/invoices"
-            className="rounded-xl px-3 py-1.5 border text-sm hover:bg-black/5 dark:hover:bg-white/10
+            className="rounded-xl px-3 py-1.5 border text-sm hover:bg-black/5 dark:hover:bg:white/10
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
                        focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
           >
