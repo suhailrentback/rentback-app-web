@@ -5,9 +5,8 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
 export async function GET(req: Request) {
-  // Only allow Vercel Cron to call this (Vercel sends X-VERCEL-CRON: 1)
-  const isCron = req.headers.get('x-vercel-cron') === '1';
-  if (!isCron) {
+  // Only Vercel Cron should call this
+  if (req.headers.get('x-vercel-cron') !== '1') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
@@ -19,9 +18,7 @@ export async function GET(req: Request) {
 
   const supabase = createClient(url, anon);
   const { data, error } = await supabase.rpc('sweep_overdue');
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
   return NextResponse.json({ updated: data ?? 0 });
 }
