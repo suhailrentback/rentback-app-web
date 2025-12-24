@@ -28,8 +28,10 @@ function money(c: string | null, cents: number | null) {
 
 export default async function InvoiceDetail({
   params,
+  searchParams,
 }: {
   params: { id: string };
+  searchParams?: Record<string, string | string[] | undefined>;
 }) {
   const supabase = getSb();
 
@@ -38,6 +40,9 @@ export default async function InvoiceDetail({
     .select('id, number, status, due_at, total, currency, created_at')
     .eq('id', params.id)
     .single();
+
+  const msgError = (searchParams?.error as string) || '';
+  const msgOk = (searchParams?.success as string) || '';
 
   if (error || !invoice) {
     return (
@@ -56,9 +61,21 @@ export default async function InvoiceDetail({
   const canIssue = invoice.status === 'DRAFT';
   const canMarkPaid = invoice.status === 'ISSUED' || invoice.status === 'OVERDUE';
   const canPdf = invoice.status === 'ISSUED' || invoice.status === 'PAID';
+  const canEdit = invoice.status === 'DRAFT';
 
   return (
     <section className="p-6 space-y-6">
+      {msgError ? (
+        <div className="rounded-xl border border-rose-300/60 dark:border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm">
+          {msgError}
+        </div>
+      ) : null}
+      {msgOk ? (
+        <div className="rounded-xl border border-emerald-300/60 dark:border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm">
+          {msgOk}
+        </div>
+      ) : null}
+
       <div className="flex items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">
@@ -88,6 +105,15 @@ export default async function InvoiceDetail({
             >
               PDF
             </a>
+          ) : null}
+
+          {canEdit ? (
+            <Link
+              href={`/landlord/invoices/${invoice.id}/edit`}
+              className="rounded-xl px-3 py-1.5 border text-sm hover:bg-black/5 dark:hover:bg-white/10"
+            >
+              Edit
+            </Link>
           ) : null}
 
           {canIssue ? (
@@ -125,7 +151,7 @@ export default async function InvoiceDetail({
             </tr>
           </thead>
           <tbody>
-            {(items ?? []).length === 0 ? (
+            {(items || []).length === 0 ? (
               <tr>
                 <td className="p-3" colSpan={4}>
                   <div className="text-sm opacity-70">No items yet.</div>
