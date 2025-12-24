@@ -1,4 +1,6 @@
 // app/api/overdue/run/route.ts
+export const runtime = 'nodejs';
+
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
@@ -22,13 +24,10 @@ export async function POST() {
   });
 
   const { data: auth } = await supabase.auth.getUser();
-  if (!auth?.user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  if (!auth?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { data, error } = await supabase.rpc('sweep_overdue');
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
   return NextResponse.json({ updated: data ?? 0 });
 }
