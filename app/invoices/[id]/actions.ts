@@ -2,7 +2,10 @@
 
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
-import { revalidatePath, redirect } from "next/navigation";
+// ✅ revalidatePath must come from next/cache
+import { revalidatePath } from "next/cache";
+// redirect still comes from next/navigation
+import { redirect } from "next/navigation";
 
 export async function confirmPaid(formData: FormData) {
   const invoiceId = String(formData.get("invoice_id") || "");
