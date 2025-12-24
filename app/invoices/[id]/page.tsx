@@ -1,24 +1,32 @@
-import Link from 'next/link';
-import { cookies } from 'next/headers';
-import { createServerClient } from '@supabase/ssr';
-import StatusBadge from '@/components/StatusBadge';
+// app/invoices/[id]/page.tsx
+import Link from "next/link";
+import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
+import StatusBadge from "@/components/StatusBadge";
+import IssueInvoiceButton from "@/components/IssueInvoiceButton";
 
+type PageParams = { params: { id: string } };
+
+type InvoiceStatus = "DRAFT" | "ISSUED" | "PAID" | "OVERDUE";
 type Invoice = {
   id: string;
   number: string | null;
-  status: 'DRAFT' | 'ISSUED' | 'PAID' | 'OVERDUE';
+  status: InvoiceStatus;
   due_at: string | null;
   total: number | null;
   currency: string | null;
   created_at: string | null;
+  landlord_id: string | null;
+  user_id: string | null;
 };
 
-async function getUserSupabase() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !anon) return { supabase: null, userId: null as string | null };
+export default async function InvoiceDetailPage({ params }: PageParams) {
+  const id = params.id;
 
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
   const cookieStore = cookies();
+
   const supabase = createServerClient(url, anon, {
     cookies: {
       get(name: string) {
@@ -29,56 +37,54 @@ async function getUserSupabase() {
     },
   });
 
-  const { data } = await supabase.auth.getUser();
-  const userId = data.user?.id ?? null;
-  return { supabase, userId };
-}
+  const { data: auth } = await supabase.auth.getUser();
+  const userId = auth.user?.id ?? null;
 
-export default async function InvoiceDetail({
-  params,
-}: {
-  params: { id: string };
-}) {
-  const { supabase, userId } = await getUserSupabase();
-  if (!supabase || !userId) {
+  // Load invoice
+  const { data: inv, error } = await supabase
+    .from("invoices")
+    .select(
+      "id, number, status, due_at, total, currency, created_at, landlord_id, user_id"
+    )
+    .eq("id", id)
+    .single<Invoice>();
+
+  if (error || !inv) {
     return (
-      <section className="p-6">
+      <section className="p-6 space-y-6">
+        <h1 className="text-2xl font-semibold">Invoice</h1>
         <div className="rounded-2xl border border-black/10 dark:border-white/10 p-6">
-          <div className="font-medium">Not signed in</div>
-          <div className="text-sm opacity-70">Please log in to view invoices.</div>
+          Not found.
         </div>
       </section>
     );
   }
 
-  const { data: rows, error } = await supabase
-    .from('invoices')
-    .select('id, number, status, due_at, total, currency, created_at')
-    .eq('user_id', userId)
-    .eq('id', params.id)
-    .limit(1);
-
-  const inv = (rows?.[0] ?? null) as Invoice | null;
-
-  if (error || !inv) {
-    throw new Error('Invoice not found');
+  // Viewer checks (basic): allow both tenant (user_id) and landlord to view
+  const viewerIsOwner = userId && (userId === inv.user_id || userId === inv.landlord_id);
+  if (!viewerIsOwner) {
+    return (
+      <section className="p-6 space-y-6">
+        <h1 className="text-2xl font-semibold">Invoice</h1>
+        <div className="rounded-2xl border border-black/10 dark:border-white/10 p-6">
+          You do not have access to this invoice.
+        </div>
+      </section>
+    );
   }
+
+  const canIssue = userId === inv.landlord_id && inv.status === "DRAFT";
 
   return (
     <section className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">
-          Invoice {inv.number ?? '—'}
+          Invoice {inv.number ? `#${inv.number}` : "—"}
         </h1>
-        <div className="flex items-center gap-2">
-          <a
-            href={`/api/receipts/${inv.id}`}
-            className="rounded-xl px-3 py-1.5 border text-sm hover:bg-black/5 dark:hover:bg-white/10
-                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
-                       focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-black"
-          >
-            Download PDF
-          </a>
+        <div className="flex items-center gap-3">
+          {canIssue ? (
+            <IssueInvoiceButton invoiceId={inv.id} />
+          ) : null}
           <Link
             href="/invoices"
             className="rounded-xl px-3 py-1.5 border text-sm hover:bg-black/5 dark:hover:bg-white/10
@@ -90,27 +96,29 @@ export default async function InvoiceDetail({
         </div>
       </div>
 
-      <div className="rounded-2xl border border-black/10 dark:border-white/10 p-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-          <div>
-            <div className="opacity-60">Status</div>
-            <div className="mt-1"><StatusBadge status={inv.status} dueAt={inv.due_at} /></div>
+      <div className="rounded-2xl border border-black/10 dark:border-white/10 overflow-hidden">
+        <div className="p-6 flex items-center justify-between">
+          <div className="space-y-1">
+            <div className="text-sm opacity-70">Status</div>
+            <StatusBadge status={inv.status} dueAt={inv.due_at} />
           </div>
-          <div>
-            <div className="opacity-60">Created</div>
-            <div className="mt-1">{inv.created_at ? new Date(inv.created_at).toLocaleString() : '—'}</div>
-          </div>
-          <div>
-            <div className="opacity-60">Due</div>
-            <div className="mt-1">{inv.due_at ? new Date(inv.due_at).toLocaleDateString() : '—'}</div>
-          </div>
-          <div>
-            <div className="opacity-60">Total</div>
-            <div className="mt-1 font-medium">
-              {typeof inv.total === 'number'
-                ? `${(inv.currency ?? 'USD').toUpperCase()} ${(inv.total / 100).toFixed(2)}`
-                : '—'}
+          <div className="space-y-1 text-right">
+            <div className="text-sm opacity-70">Total</div>
+            <div className="text-lg font-medium tabular-nums">
+              {typeof inv.total === "number"
+                ? `${(inv.currency ?? "USD").toUpperCase()} ${(inv.total / 100).toFixed(2)}`
+                : "—"}
             </div>
+          </div>
+        </div>
+        <div className="border-t border-black/10 dark:border-white/10 p-6 grid grid-cols-2 gap-6 text-sm">
+          <div>
+            <div className="opacity-70">Created</div>
+            <div>{inv.created_at ? new Date(inv.created_at).toLocaleString() : "—"}</div>
+          </div>
+          <div>
+            <div className="opacity-70">Due</div>
+            <div>{inv.due_at ? new Date(inv.due_at).toLocaleDateString() : "—"}</div>
           </div>
         </div>
       </div>
