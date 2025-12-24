@@ -1,9 +1,18 @@
-import Link from 'next/link';
-import { cookies } from 'next/headers';
-import { createServerClient } from '@supabase/ssr';
-import { issueInvoice, markInvoicePaid } from '@/app/actions/invoices';
+import Link from "next/link";
+import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
+import StatusBadge from "@/components/StatusBadge";
+import { confirmPaid } from "./actions";
 
-type Status = 'DRAFT' | 'ISSUED' | 'PAID' | 'OVERDUE';
+type Invoice = {
+  id: string;
+  number: string | null;
+  status: "DRAFT" | "ISSUED" | "PAID" | "OVERDUE";
+  due_at: string | null;
+  total: number | null; // cents
+  currency: string | null;
+  created_at: string | null;
+};
 
 function getSb() {
   const cookieStore = cookies();
@@ -20,12 +29,6 @@ function getSb() {
   });
 }
 
-function money(c: string | null, cents: number | null) {
-  if (cents == null) return '—';
-  const major = (cents / 100).toFixed(2);
-  return `${(c || 'USD').toUpperCase()} ${major}`;
-}
-
 export default async function InvoiceDetail({
   params,
   searchParams,
@@ -33,160 +36,173 @@ export default async function InvoiceDetail({
   params: { id: string };
   searchParams?: Record<string, string | string[] | undefined>;
 }) {
+  const id = params.id;
+
   const supabase = getSb();
+  const { data: authData } = await supabase.auth.getUser();
+  const userId = authData.user?.id ?? null;
 
-  const { data: invoice, error } = await supabase
-    .from('invoices')
-    .select('id, number, status, due_at, total, currency, created_at')
-    .eq('id', params.id)
-    .single();
-
-  const msgError = (searchParams?.error as string) || '';
-  const msgOk = (searchParams?.success as string) || '';
-
-  if (error || !invoice) {
+  if (!userId) {
     return (
       <section className="p-6">
-        <div className="text-sm opacity-70">Invoice not found.</div>
+        <div className="text-sm opacity-70">Please sign in to view this invoice.</div>
       </section>
     );
   }
 
-  const { data: items } = await supabase
-    .from('invoice_items')
-    .select('id, description, quantity, unit_price')
-    .eq('invoice_id', invoice.id)
-    .order('id', { ascending: true });
+  const { data, error } = await supabase
+    .from("invoices")
+    .select("id, number, status, due_at, total, currency, created_at")
+    .eq("user_id", userId)
+    .eq("id", id)
+    .single();
 
-  const canIssue = invoice.status === 'DRAFT';
-  const canMarkPaid = invoice.status === 'ISSUED' || invoice.status === 'OVERDUE';
-  const canPdf = invoice.status === 'ISSUED' || invoice.status === 'PAID';
-  const canEdit = invoice.status === 'DRAFT';
+  if (error || !data) {
+    return (
+      <section className="p-6">
+        <div className="font-medium">Invoice not found</div>
+        <div className="mt-3">
+          <Link
+            href="/invoices"
+            className="rounded-xl px-3 py-1.5 border text-sm hover:bg-black/5 dark:hover:bg-white/10"
+          >
+            Back to invoices
+          </Link>
+        </div>
+      </section>
+    );
+  }
+
+  const inv = data as Invoice;
+  const errorMsg =
+    typeof searchParams?.error === "string" ? decodeURIComponent(searchParams.error) : null;
+  const paidOk = String(searchParams?.paid || "") === "1";
+  const receiptNo =
+    typeof searchParams?.receipt === "string" ? decodeURIComponent(searchParams.receipt) : null;
+
+  const totalMajor =
+    typeof inv.total === "number" ? (inv.total / 100).toFixed(2) : undefined;
 
   return (
     <section className="p-6 space-y-6">
-      {msgError ? (
-        <div className="rounded-xl border border-rose-300/60 dark:border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm">
-          {msgError}
-        </div>
-      ) : null}
-      {msgOk ? (
-        <div className="rounded-xl border border-emerald-300/60 dark:border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm">
-          {msgOk}
-        </div>
-      ) : null}
-
-      <div className="flex items-center justify-between gap-3">
-        <div>
+      <div className="flex items-center justify-between gap-4">
+        <div className="space-y-1">
           <h1 className="text-2xl font-semibold">
-            {invoice.number ?? 'Draft Invoice'}
+            {inv.number ? `Invoice ${inv.number}` : "Invoice"}
           </h1>
           <div className="text-xs opacity-70">
-            Status: {invoice.status} • Created:{' '}
-            {invoice.created_at
-              ? new Date(invoice.created_at).toLocaleDateString()
-              : '—'}{' '}
-            • Due:{' '}
-            {invoice.due_at ? new Date(invoice.due_at).toLocaleDateString() : '—'}
+            Created {inv.created_at ? new Date(inv.created_at).toLocaleString() : "—"}
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <StatusBadge status={inv.status} dueAt={inv.due_at} />
+          <a
+            href={`/api/receipts/${inv.id}`}
+            className="rounded-xl px-3 py-1.5 border text-sm hover:bg-black/5 dark:hover:bg-white/10"
+          >
+            PDF
+          </a>
           <Link
             href="/invoices"
             className="rounded-xl px-3 py-1.5 border text-sm hover:bg-black/5 dark:hover:bg-white/10"
           >
             Back
           </Link>
-
-          {canPdf ? (
-            <a
-              href={`/api/receipts/${invoice.id}`}
-              className="rounded-xl px-3 py-1.5 border text-sm hover:bg-black/5 dark:hover:bg-white/10"
-            >
-              PDF
-            </a>
-          ) : null}
-
-          {canEdit ? (
-            <Link
-              href={`/landlord/invoices/${invoice.id}/edit`}
-              className="rounded-xl px-3 py-1.5 border text-sm hover:bg-black/5 dark:hover:bg-white/10"
-            >
-              Edit
-            </Link>
-          ) : null}
-
-          {canIssue ? (
-            <form action={issueInvoice}>
-              <input type="hidden" name="id" value={invoice.id} />
-              <button
-                className="rounded-xl px-3 py-1.5 border text-sm hover:bg-black/5 dark:hover:bg-white/10"
-              >
-                Issue
-              </button>
-            </form>
-          ) : null}
-
-          {canMarkPaid ? (
-            <form action={markInvoicePaid}>
-              <input type="hidden" name="id" value={invoice.id} />
-              <button
-                className="rounded-xl px-3 py-1.5 border text-sm hover:bg-black/5 dark:hover:bg-white/10"
-              >
-                Mark Paid
-              </button>
-            </form>
-          ) : null}
         </div>
       </div>
 
-      <div className="rounded-2xl border overflow-x-auto">
-        <table className="min-w-full text-sm">
-          <thead className="bg-black/[0.03] dark:bg-white/[0.06]">
-            <tr>
-              <th className="text-left p-3 font-medium">Description</th>
-              <th className="text-right p-3 font-medium w-24">Qty</th>
-              <th className="text-right p-3 font-medium w-40">Unit</th>
-              <th className="text-right p-3 font-medium w-40">Line Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(items || []).length === 0 ? (
-              <tr>
-                <td className="p-3" colSpan={4}>
-                  <div className="text-sm opacity-70">No items yet.</div>
-                </td>
-              </tr>
-            ) : (
-              items!.map((it) => {
-                const lt = (it.quantity || 0) * (it.unit_price || 0);
-                return (
-                  <tr key={it.id} className="border-t">
-                    <td className="p-3">{it.description}</td>
-                    <td className="p-3 text-right tabular-nums">{it.quantity}</td>
-                    <td className="p-3 text-right tabular-nums">
-                      {money(invoice.currency, it.unit_price)}
-                    </td>
-                    <td className="p-3 text-right tabular-nums">
-                      {money(invoice.currency, lt)}
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-          <tfoot>
-            <tr className="border-t">
-              <td className="p-3 font-medium text-right" colSpan={3}>
-                Total
-              </td>
-              <td className="p-3 text-right font-semibold">
-                {money(invoice.currency, invoice.total)}
-              </td>
-            </tr>
-          </tfoot>
-        </table>
+      {paidOk && (
+        <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4">
+          <div className="text-sm">
+            Payment confirmed. {receiptNo ? <>Receipt <span className="font-mono">{receiptNo}</span> created.</> : null}
+          </div>
+        </div>
+      )}
+
+      {errorMsg && (
+        <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4">
+          <div className="text-sm">Error: {errorMsg}</div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="rounded-2xl border border-black/10 dark:border-white/10 p-4">
+          <div className="text-xs opacity-70">Status</div>
+          <div className="mt-1">
+            <StatusBadge status={inv.status} dueAt={inv.due_at} />
+          </div>
+        </div>
+        <div className="rounded-2xl border border-black/10 dark:border-white/10 p-4">
+          <div className="text-xs opacity-70">Total</div>
+          <div className="mt-1 text-lg font-medium">
+            {typeof inv.total === "number"
+              ? `${(inv.currency ?? "USD").toUpperCase()} ${totalMajor}`
+              : "—"}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-black/10 dark:border-white/10 p-4">
+          <div className="text-xs opacity-70">Due</div>
+          <div className="mt-1">
+            {inv.due_at ? new Date(inv.due_at).toLocaleDateString() : "—"}
+          </div>
+        </div>
       </div>
+
+      {/* Mark as Paid form shown only when not already PAID */}
+      {inv.status !== "PAID" && (
+        <div className="rounded-2xl border border-black/10 dark:border-white/10 p-6">
+          <div className="font-medium mb-3">Mark as Paid</div>
+          <form action={confirmPaid} className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <input type="hidden" name="invoice_id" value={inv.id} />
+            <label className="block">
+              <span className="text-xs opacity-70">Amount (major)</span>
+              <input
+                type="number"
+                step="0.01"
+                name="amount"
+                defaultValue={totalMajor ?? ""}
+                placeholder="e.g., 499.99"
+                className="mt-1 w-full rounded-xl border px-3 py-2 bg-transparent"
+              />
+            </label>
+            <label className="block">
+              <span className="text-xs opacity-70">Method</span>
+              <select
+                name="method"
+                defaultValue="cash"
+                className="mt-1 w-full rounded-xl border px-3 py-2 bg-transparent"
+              >
+                <option value="cash">Cash</option>
+                <option value="bank">Bank</option>
+                <option value="card">Card</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <label className="block md:col-span-2">
+              <span className="text-xs opacity-70">Reference (optional)</span>
+              <input
+                type="text"
+                name="reference"
+                placeholder="e.g., Bank Txn ID, memo"
+                className="mt-1 w-full rounded-xl border px-3 py-2 bg-transparent"
+              />
+            </label>
+
+            <div className="md:col-span-4">
+              <button
+                type="submit"
+                className="rounded-xl px-3 py-2 border text-sm hover:bg-black/5 dark:hover:bg-white/10"
+              >
+                Confirm Payment
+              </button>
+            </div>
+          </form>
+          <div className="text-xs opacity-70 mt-2">
+            On confirm: invoice status → <span className="font-mono">PAID</span>, receipt row is
+            created, and this page refreshes with a success banner.
+          </div>
+        </div>
+      )}
     </section>
   );
 }
