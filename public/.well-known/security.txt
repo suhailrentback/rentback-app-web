@@ -1,0 +1,4 @@
+Contact: mailto:help@rentback.app
+Preferred-Languages: en
+Canonical: https://rentback.app/.well-known/security.txt
+Policy: https://rentback.app/security
