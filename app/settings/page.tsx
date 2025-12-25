@@ -1,41 +1,40 @@
-import { cookies } from 'next/headers';
-import { createServerClient } from '@supabase/ssr';
-import { updateProfile } from './actions';
+// app/settings/page.tsx
+import { redirect } from "next/navigation";
+import getSupabaseServer from "@/lib/supabase/server";
+import { updateProfile } from "./actions";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
+
+type Profile = {
+  id: string;
+  full_name: string | null;
+  display_name: string | null;
+  phone: string | null;
+  lang: string | null;      // "en" | "ur" if you want to narrow it
+  timezone: string | null;
+  avatar_url: string | null;
+  updated_at?: string | null;
+};
 
 export default async function SettingsPage() {
-  const cookieStore = cookies();
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
-        },
-        set(name: string, value: string, options: any) {
-          cookieStore.set({ name, value, ...options });
-        },
-        remove(name: string, options: any) {
-          cookieStore.set({ name, value: '', ...options, maxAge: 0 });
-        },
-      },
-    }
-  );
+  const sb = getSupabaseServer();
 
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+
   if (!user) {
-    return <div className="p-6">Please sign in to manage your settings.</div>;
+    redirect("/auth/signin");
   }
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('full_name, display_name, phone, lang, timezone, avatar_url')
-    .eq('id', user.id)
+  const { data: profile } = await sb
+    .from("profiles")
+    .select("id, full_name, display_name, phone, lang, timezone, avatar_url")
+    .eq("id", user!.id)
     .maybeSingle();
 
-  const p = profile ?? {};
+  // Give TypeScript a proper shape so p.full_name, etc. type-check.
+  const p: Partial<Profile> = profile ?? {};
 
   return (
     <div className="max-w-2xl mx-auto p-6 space-y-6">
@@ -47,7 +46,7 @@ export default async function SettingsPage() {
             <span className="text-sm">Full name</span>
             <input
               name="full_name"
-              defaultValue={p.full_name ?? ''}
+              defaultValue={p.full_name ?? ""}
               className="border rounded-md px-3 py-2"
             />
           </label>
@@ -56,7 +55,7 @@ export default async function SettingsPage() {
             <span className="text-sm">Display name</span>
             <input
               name="display_name"
-              defaultValue={p.display_name ?? ''}
+              defaultValue={p.display_name ?? ""}
               className="border rounded-md px-3 py-2"
             />
           </label>
@@ -65,25 +64,28 @@ export default async function SettingsPage() {
             <span className="text-sm">Phone</span>
             <input
               name="phone"
-              defaultValue={p.phone ?? ''}
+              defaultValue={p.phone ?? ""}
               className="border rounded-md px-3 py-2"
             />
           </label>
 
           <label className="grid gap-1">
             <span className="text-sm">Language</span>
-            <input
+            <select
               name="lang"
-              defaultValue={p.lang ?? ''}
+              defaultValue={p.lang ?? "en"}
               className="border rounded-md px-3 py-2"
-            />
+            >
+              <option value="en">English</option>
+              <option value="ur">Urdu</option>
+            </select>
           </label>
 
           <label className="grid gap-1">
-            <span className="text-sm">Time zone</span>
+            <span className="text-sm">Timezone</span>
             <input
               name="timezone"
-              defaultValue={p.timezone ?? ''}
+              defaultValue={p.timezone ?? ""}
               className="border rounded-md px-3 py-2"
             />
           </label>
@@ -92,18 +94,20 @@ export default async function SettingsPage() {
             <span className="text-sm">Avatar URL</span>
             <input
               name="avatar_url"
-              defaultValue={p.avatar_url ?? ''}
+              defaultValue={p.avatar_url ?? ""}
               className="border rounded-md px-3 py-2"
             />
           </label>
         </div>
 
-        <button
-          type="submit"
-          className="rounded-md px-4 py-2 border"
-        >
-          Save
-        </button>
+        <div className="pt-2">
+          <button
+            type="submit"
+            className="px-4 py-2 rounded-md bg-black text-white hover:opacity-90"
+          >
+            Save changes
+          </button>
+        </div>
       </form>
     </div>
   );
