@@ -5,7 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { createServerClient } from '@supabase/ssr';
 
-export async function updateProfile(formData: FormData) {
+export async function updateProfile(formData: FormData): Promise<void> {
   const cookieStore = cookies();
 
   const supabase = createServerClient(
@@ -27,7 +27,10 @@ export async function updateProfile(formData: FormData) {
   );
 
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect('/auth/signin');
+  if (!user) {
+    redirect('/auth/signin');
+    return; // satisfies TS even though redirect never returns
+  }
 
   const patch: Record<string, any> = {};
   for (const key of ['full_name', 'display_name', 'phone', 'lang', 'timezone', 'avatar_url']) {
@@ -40,6 +43,6 @@ export async function updateProfile(formData: FormData) {
     await supabase.from('profiles').update(patch).eq('id', user.id);
   }
 
+  // Revalidate the settings page and return nothing
   revalidatePath('/settings');
-  return { ok: true };
 }
