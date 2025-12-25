@@ -1,5 +1,5 @@
 // app/admin/notifications/page.tsx
-import { getSupabaseServer } from "@/lib/supabase/server";
+import getSupabaseServer from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
