@@ -27,11 +27,8 @@ export async function updateProfile(formData: FormData) {
   );
 
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
-    redirect('/auth/signin');
-  }
+  if (!user) redirect('/auth/signin');
 
-  // Collect known profile fields from the form (expand as needed)
   const patch: Record<string, any> = {};
   for (const key of ['full_name', 'display_name', 'phone', 'lang', 'timezone', 'avatar_url']) {
     const v = formData.get(key);
@@ -40,10 +37,9 @@ export async function updateProfile(formData: FormData) {
 
   if (Object.keys(patch).length > 0) {
     patch.updated_at = new Date().toISOString();
-    await supabase.from('profiles').update(patch).eq('id', user!.id);
+    await supabase.from('profiles').update(patch).eq('id', user.id);
   }
 
-  // Refresh the settings page data
   revalidatePath('/settings');
   return { ok: true };
 }
